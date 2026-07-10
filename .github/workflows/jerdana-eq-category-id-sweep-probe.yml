@@ -1,0 +1,97 @@
+name: Jerdana Equipment Category ID Sweep Probe
+
+on:
+  push:
+    branches:
+      - jerdana-eq-category-id-sweep-actions-probe
+  workflow_dispatch:
+
+jobs:
+  build-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Apply Jerdana equipment category ID sweep patch
+        run: |
+          git apply --check reproducibility/jerdana-eq-category-id-sweep.patch
+          git apply reproducibility/jerdana-eq-category-id-sweep.patch
+          git diff -- mod/mod.cpp > reproducibility/applied-source-diff.patch
+
+      - name: Setup original ps2dev environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install nodejs
+          wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
+          sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
+
+      - name: Build with original script
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PS2SDK=$PS2DEV/ps2sdk
+          export GSKIT=$PS2DEV/gsKit
+          export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin
+          cd mod
+          ./build.sh
+
+      - name: Fetch official v2.4 baseline
+        run: |
+          mkdir -p reproducibility
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          wget -O reproducibility/official-v2.4-df_hack.elf https://github.com/monster860/ntdf-mod/releases/download/v2.4/df_hack.elf
+
+      - name: Compare probe against official baseline
+        run: |
+          mkdir -p reproducibility
+          EXPECTED_OFFICIAL_PNACH=8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214
+          EXPECTED_OFFICIAL_ELF=43eba6baafba8aa20bfa2b2c9d8c7e5fcb24eb30ce2d9c92f2bbd4eea8bacf30
+          PREVIOUS_SLIM_EQ3_PNACH=a9e8e4919193bc1b656a3b275597a8a949e77bc33226192880d05882c5045c82
+          PREVIOUS_SLIM_EQ3_ELF=cf46e110575e0e1d95d966fc56a1139175be827330f047d5827abb2e567fa94e
+          OFFICIAL_PNACH="$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')"
+          OFFICIAL_ELF="$(sha256sum reproducibility/official-v2.4-df_hack.elf | awk '{print $1}')"
+          GENERATED_PNACH="$(sha256sum mod/934F9081.pnach | awk '{print $1}')"
+          GENERATED_ELF="$(sha256sum mod/df_hack.elf | awk '{print $1}')"
+          {
+            echo "expected_official_pnach=$EXPECTED_OFFICIAL_PNACH"
+            echo "official_pnach=$OFFICIAL_PNACH"
+            echo "generated_pnach=$GENERATED_PNACH"
+            echo "expected_official_elf=$EXPECTED_OFFICIAL_ELF"
+            echo "official_elf=$OFFICIAL_ELF"
+            echo "generated_elf=$GENERATED_ELF"
+            echo "previous_slim_eq3_pnach=$PREVIOUS_SLIM_EQ3_PNACH"
+            echo "previous_slim_eq3_elf=$PREVIOUS_SLIM_EQ3_ELF"
+            echo "previous_slim_eq3_data_end=0x307F8C"
+            echo "previous_slim_eq3_data_bytes=15328"
+            echo "previous_slim_eq3_lines=3846"
+          } | tee reproducibility/hash-report.txt
+          test "$OFFICIAL_PNACH" = "$EXPECTED_OFFICIAL_PNACH"
+          test "$OFFICIAL_ELF" = "$EXPECTED_OFFICIAL_ELF"
+          node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-report.txt
+          sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c mod/mod.o mod/mod.s mod/mod.ii > reproducibility/generated-artifact-hashes.txt
+          git diff -- README.md .github/workflows/build.yml elf_processor.js mod/build.sh mod/make_mod.js mod/mod.cpp mod/loader/loader.c docs/reproducibility-v2.4.md scripts/compare-pnach-layout.js .github/workflows/jerdana-eq-category-id-sweep-probe.yml reproducibility/jerdana-eq-category-id-sweep.patch > reproducibility/tracked-source-diff-after-build.patch
+          git status --short > reproducibility/git-status-after-build.txt
+          git show --stat --oneline --no-renames HEAD > reproducibility/source-commit.txt
+          awk '/== candidate ==/{candidate=1} candidate && /guard_pass=yes/{found=1} END{exit found ? 0 : 1}' reproducibility/layout-report.txt
+
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerdana-eq-category-id-sweep-probe
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.o
+            mod/mod.s
+            mod/mod.ii
+            mod/loader/patch.c
+            reproducibility/official-v2.4-934F9081.pnach
+            reproducibility/official-v2.4-df_hack.elf
+            reproducibility/hash-report.txt
+            reproducibility/layout-report.txt
+            reproducibility/generated-artifact-hashes.txt
+            reproducibility/applied-source-diff.patch
+            reproducibility/tracked-source-diff-after-build.patch
+            reproducibility/git-status-after-build.txt
+            reproducibility/source-commit.txt
+            reproducibility/jerdana-eq-category-id-sweep.patch
