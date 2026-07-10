@@ -1,0 +1,65 @@
+diff --git a/mod/mod.cpp b/mod/mod.cpp
+index 95c3804..55bc961 100644
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -12,6 +12,7 @@
+ #define StartExteriorReplacementLoad ((void (*)(int, int, char*))0x17b2b0)
+ #define StartEnterInterior ((void (*)(int, int, int, char*))0x17b0c0)
+ #define GiveItemToHero ((void (*)(int, int, bool))0x176440)
++#define GetCurrentEquipmentSlot ((int (*)(int, int))0x1AC1A0)
+ #define load_area ((void (*)(int, int, int, int, int, int, int, char*, int, int))0x120ba8)
+ #define get_area_file ((int(*)(int))0x21a6c8)
+ #define DisplayDialogText ((void (*)(const char *))0x1794F8)
+@@ -137,24 +138,10 @@ char *options_menu_items[] = {
+ 	"Show Alignments"
+ };
+ char *options_menu_description[] = {
+-	"Enables the debug mode\n"
+-	"that's part of the game.\n"
+-	"Usually requires reloading\n"
+-	"the current area to take effect.",
+-	
+-	"Disables any seamless load\n"
+-	"triggers. However, this does\n"
+-	"not affect any that work via,\n"
+-	"for example, pressing square.",
+-
+-	"Enables the coordinate display\n"
+-	"Warning: can cause game crashes\n"
+-	"if there's too much text on the\n"
+-	"screen.",
+-
+-	"Displays alignemtns of enemies\n"
+-	"Can causes crashes if there's\n"
+-	"too much text on the screen.\n"
++	"",
++	"",
++	"",
++	""
+ };
+ bool *options_menu_flags[] = {
+ 	&debug_mode_on,
+@@ -702,6 +689,23 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 		append_str(char_buf, "\n\n", char_buf_len);
+ 		append_str(char_buf, options_menu_description[hacks_menu_idx], char_buf_len);
+ 
++		int outfit_slot = 0;
++		int outfit_config = 0;
++		int outfit_item_id = -1;
++		int hero_items = *((int*)0x35c7ec);
++		if(hero_items) {
++			outfit_slot = GetCurrentEquipmentSlot(hero_items, 3);
++		}
++		if(outfit_slot) {
++			outfit_config = *((int*)outfit_slot);
++			if(outfit_config) {
++				outfit_item_id = *((short*)(outfit_config + 0x0c));
++			}
++		}
++		char outfit_line[48];
++		sprintf(outfit_line, "\n\nEq3 s:%x c:%x id:%d", outfit_slot, outfit_config, outfit_item_id);
++		append_str(char_buf, outfit_line, char_buf_len);
++
+ 	} else {
+ 		state = MENU_OFF;
+ 	}
