@@ -1,5 +1,5 @@
 diff --git a/mod/mod.cpp b/mod/mod.cpp
-index 95c3804..ae0f351 100644
+index 95c3804..0d433b5 100644
 --- a/mod/mod.cpp
 +++ b/mod/mod.cpp
 @@ -12,6 +12,9 @@
@@ -127,7 +127,7 @@ index 95c3804..ae0f351 100644
  void CancelLedgeFly(bool exterior) {
  	if(*((int*)(*((int*)0x35c7d4) + 0x144)) != 0x25) return; // don't be overzealous.
  	*((int*)(*((int*)0x35c7d4) + 0x144)) = 1; // actually cancel it.
-@@ -681,26 +710,25 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+@@ -681,26 +710,23 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
  			append_str(char_buf, "\n\n  false", char_buf_len);
  		}
  	} else if(state == MENU_OPTIONS) {
@@ -140,15 +140,10 @@ index 95c3804..ae0f351 100644
  			state = MENU_MAIN;
  			hacks_menu_idx = 0;
  			return (void*)0;
-+		} else if(cbi & 0x80) {
-+			stage1_restore();
- 		} else if(cbi & 0x40) {
+-		} else if(cbi & 0x40) {
 -			*options_menu_flags[hacks_menu_idx] = !(*options_menu_flags[hacks_menu_idx]);
-+			stage1_apply();
-+		} else if(cbi & 0x10) {
-+			playmenusound(0x6);
- 		}
- 
+-		}
+-
 -		for(int i = 0; i < NUM_OPTIONS; i++) {
 -			if(i == hacks_menu_idx) append_str(char_buf, "\x01\x03\x09\x02\x03\xc8\x73\x32\x80", char_buf_len);
 -			append_str(char_buf, options_menu_items[i], char_buf_len);
@@ -157,6 +152,12 @@ index 95c3804..ae0f351 100644
 -		}
 -		append_str(char_buf, "\n\n", char_buf_len);
 -		append_str(char_buf, options_menu_description[hacks_menu_idx], char_buf_len);
++		} else if(cbi & 0x80) {
++			stage1_restore();
++		} else if(cbi & 0x40) {
++			stage1_apply();
++		}
++
 +		int slot = OUTFIT_SLOT();
 +		int config = slot ? *((int*)slot) : 0;
 +		if((outfit_state == 1 || outfit_state == 5) && (slot != saved_slot || config != target_config)) outfit_state = 6;

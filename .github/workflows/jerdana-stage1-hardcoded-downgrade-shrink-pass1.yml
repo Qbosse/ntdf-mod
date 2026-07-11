@@ -50,7 +50,7 @@ jobs:
             echo "controls=X apply; Square restore; Triangle back only when outfit_state is not unresolved; Circle unused; L2 unused"
             echo "one_apply_restore_cycle_per_session=yes"
             echo "compact_display=J%d a%d id:%d"
-            echo "optimizations=single outfit_state replaces apply_active/test_complete/status; single display format replaces seven status strings; reference lookup helper removed; item id helper converted to macro; apply/restore made static inline; duplicate target display lookup removed"
+            echo "optimizations=single outfit_state replaces apply_active/test_complete/status; single display format replaces seven status strings; reference lookup helper removed; item id helper converted to macro; apply/restore made static inline; duplicate target display lookup removed; blocked Triangle sound feedback removed while unresolved"
             echo "failed_candidate_end=0x3082D4"
             echo "required_guard=0x30809C"
             echo "preferred_target=0x307FC4"
@@ -155,94 +155,4 @@ jobs:
             let addr = DATA_START;
             let last = null;
             while (map.has(addr)) {
-              last = addr;
-              addr += 4;
-            }
-            return last;
-          }
-          function hooks(map) {
-            const end = dataEnd(map);
-            const out = new Map();
-            for (const [addr, value] of map) {
-              if (!(addr >= DATA_START && end !== null && addr <= end)) out.set(addr, value);
-            }
-            return out;
-          }
-          const official = parse("reproducibility/official-v2.4-934F9081.pnach");
-          const candidate = parse("mod/934F9081.pnach");
-          const officialHooks = hooks(official);
-          const candidateHooks = hooks(candidate);
-          const officialHookSet = [...officialHooks.keys()].sort((a, b) => a - b);
-          const candidateHookSet = [...candidateHooks.keys()].sort((a, b) => a - b);
-          const candidateEnd = dataEnd(candidate);
-          const unexpected = candidateHookSet.filter((addr) => !officialHooks.has(addr));
-          const missing = officialHookSet.filter((addr) => !candidateHooks.has(addr));
-          const changed = officialHookSet.filter((addr) => candidateHooks.has(addr) && officialHooks.get(addr) !== candidateHooks.get(addr));
-          const guardPass = candidateEnd !== null && candidateEnd <= DATA_GUARD;
-          const hookSetsSame = unexpected.length === 0 && missing.length === 0;
-          fs.writeFileSync("reproducibility/official-patch-addresses.txt", [...official.keys()].sort((a, b) => a - b).map((addr) => hex(addr)).join("\n") + "\n");
-          fs.writeFileSync("reproducibility/candidate-patch-addresses.txt", [...candidate.keys()].sort((a, b) => a - b).map((addr) => hex(addr)).join("\n") + "\n");
-          const report = [];
-          report.push(`data_start=${hex(DATA_START)}`);
-          report.push(`data_end=${hex(candidateEnd)}`);
-          report.push(`guard=${hex(DATA_GUARD)}`);
-          report.push(`guard_pass=${guardPass ? "yes" : "no"}`);
-          report.push(`margin_bytes=${DATA_GUARD - candidateEnd}`);
-          report.push(`margin_hex=${hex(DATA_GUARD - candidateEnd, 1)}`);
-          report.push(`reduction_from_failed_bytes=${FAILED_END - candidateEnd}`);
-          report.push(`reduction_from_failed_hex=${hex(FAILED_END - candidateEnd, 1)}`);
-          report.push(`delta_vs_category_sweep_bytes=${candidateEnd - CATEGORY_SWEEP_END}`);
-          report.push(`delta_vs_category_sweep_hex=${hex(candidateEnd - CATEGORY_SWEEP_END, 1)}`);
-          report.push(`preferred_target_pass=${candidateEnd <= CATEGORY_SWEEP_END ? "yes" : "no"}`);
-          report.push(`hook_sets_same=${hookSetsSame ? "yes" : "no"}`);
-          report.push(`candidate_hooks=${candidateHookSet.map((addr) => hex(addr)).join(",")}`);
-          report.push(`missing_hook_addresses=${missing.map((addr) => hex(addr)).join(",") || "none"}`);
-          report.push(`unexpected_patch_addresses=${unexpected.map((addr) => hex(addr)).join(",") || "none"}`);
-          report.push("changed_hook_target_values:");
-          if (changed.length === 0) {
-            report.push("none");
-          } else {
-            for (const addr of changed) report.push(`${hex(addr)} ${officialHooks.get(addr)} -> ${candidateHooks.get(addr)}`);
-          }
-          fs.writeFileSync("reproducibility/address-report.txt", report.join("\n") + "\n");
-          console.log(report.join("\n"));
-          if (!guardPass || !hookSetsSame || unexpected.length) process.exit(1);
-          NODE
-
-      - name: Record post-build source state
-        if: always()
-        run: |
-          git diff -- README.md .github/workflows/build.yml elf_processor.js mod/build.sh mod/make_mod.js mod/mod.cpp mod/loader/loader.c docs/reproducibility-v2.4.md scripts/compare-pnach-layout.js > reproducibility/tracked-source-diff-after-build.patch
-          git status --short > reproducibility/git-status-after-build.txt
-          git rev-parse HEAD > reproducibility/source-commit.txt
-
-      - name: Upload shrink pass 1 artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: jerdana-stage1-hardcoded-downgrade-shrink-pass1
-          path: |
-            mod/934F9081.pnach
-            mod/df_hack.elf
-            mod/mod.o
-            mod/mod.s
-            mod/mod.ii
-            mod/loader/patch.c
-            reproducibility/official-v2.4-934F9081.pnach
-            reproducibility/official-v2.4-df_hack.elf
-            reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
-            reproducibility/applied-source-diff.patch
-            reproducibility/applied-source-diff-stat.txt
-            reproducibility/hash-report.txt
-            reproducibility/layout-report.txt
-            reproducibility/layout-vs-failed-stage1.txt
-            reproducibility/layout-vs-category-sweep.txt
-            reproducibility/address-report.txt
-            reproducibility/official-patch-addresses.txt
-            reproducibility/candidate-patch-addresses.txt
-            reproducibility/shrink-pass-report.txt
-            reproducibility/size-contributors-report.txt
-            reproducibility/previous-artifacts-report.txt
-            reproducibility/tracked-source-diff-after-build.patch
-            reproducibility/git-status-after-build.txt
-            reproducibility/source-commit.txt
+              last = addr \€€€€€€€€€€€€…‘‘È€¬ô€Ðì(€€€€€€€€€€€ô(€€€€€€€€€€€É•ÑÕÉ¸±…ÍÐì(€€€€€€€€€ô(€€€€€€€€€™Õ¹Ñ¥½¸¡½½­Ì¡µ…À¤ì(€€€€€€€€€€€½¹ÍÐ•¹€ô‘…Ñ…¹¡µ…À¤ì(€€€€€€€€€€€½¹ÍÐ½ÕÐ€ô¹•Ü5…À ¤ì(€€€€€€€€€€€™½È€¡½¹ÍÐm…‘‘È°Ù…±Õ•t½˜µ…À¤ì(€€€€€€€€€€€€€¥˜€ „¡…‘‘È€øôQ}MQIP€Éˆ•¹€„ôô¹Õ±°€˜˜…‘‘È€ðô•¹¤¤½ÕÐ¹Í•Ð¡…‘‘È°Ù…±Õ”¤ì(€€€€€€€€€€€ô(€€€€€€€€€€€É•ÑÕÉ¸½ÕÐì(€€€€€€€€€ô(€€€€€€€€€½¹ÍÐ½™™¥¥…°€ôÁ…ÉÍ” ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µØÈ¸Ð´äÌÑäÀàÄ¹Á¹… ˆ¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ”€ôÁ…ÉÍ” ‰µ½¼äÌÑäÀàÄ¹Á¹… ˆ¤ì(€€€€€€€€€½¹ÍÐ½™™¥¥…±!½½­Ì€ô¡½½­Ì¡½™™¥¥…°¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ•!½½­Ì€ô¡½½­Ì¡…¹‘¥‘…Ñ”¤ì(€€€€€€€€€½¹ÍÐ½™™¥¥…±!½½­M•Ð€ôl¸¸¹½™™¥¥…±!½½­Ì¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ•!½½­M•Ð€ôl¸¸¹…¹‘¥‘…Ñ•!½½­Ì¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ•¹€ô‘…Ñ…¹¡…¹‘¥‘…Ñ”¤ì(€€€€€€€€€½¹ÍÐÕ¹•áÁ•Ñ•€ô…¹‘¥‘…Ñ•!½½­M•Ð¹™¥±Ñ•È ¡…‘‘È¤€ôø€…½™™¥¥…±!½½­Ì¹¡…Ì¡…‘‘È¤¤ì(€€€€€€€€€½¹ÍÐµ¥ÍÍ¥¹œ€ô½™™¥¥…±!½½­M•Ð¹™¥±Ñ•È ¡…‘‘È¤€ôø€……¹‘¥‘…Ñ•!½½­Ì¹¡…Ì¡…‘‘È¤¤ì(€€€€€€€€€½¹ÍÐ¡…¹•€ô½™™¥¥…±!½½­M•Ð¹™¥±Ñ•È ¡…‘‘È¤€ôø…¹‘¥‘…Ñ•!½½­Ì¹¡…Ì¡…‘‘È¤€˜˜½™™¥¥…±!½½­Ì¹•Ð¡…‘‘È¤€„ôô…¹‘¥‘…Ñ•!½½­Ì¹•Ð¡…‘‘È¤¤ì(€€€€€€€€€½¹ÍÐÕ…É‘A…ÍÌ€ô…¹‘¥‘…Ñ•¹€„ôô¹Õ±°€˜˜…¹‘¥‘…Ñ•¹€ðôQ}UIì(€€€€€€€€€½¹ÍÐ¡½½­M•ÑÍM…µ”€ôÕ¹•áÁ•Ñ•¹±•¹Ñ €ôôô€À€˜˜µ¥ÍÍ¥¹œ¹±•¹Ñ €ôôô€Àì(€€€€€€€€€™Ì¹ÝÉ¥Ñ•¥±•Må¹Œ ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐˆ°l¸¸¹½™™¥¥…°¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ‰q¸ˆ¤€¬€‰q¸ˆ¤ì(€€€€€€€€€™Ì¹ÝÉ¥Ñ•¥±•Må¹Œ ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½…¹‘¥‘…Ñ”µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐˆ°l¸¸¹…¹‘¥‘…Ñ”¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ‰q¸ˆ¤€¬€‰q¸ˆ¤ì(€€€€€€€€€½¹ÍÐÉ•Á½ÉÐ€ômtì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘…Ñ…}ÍÑ…ÉÐô‘í¡•à¡Q}MQIP¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘…Ñ…}•¹ô‘í¡•à¡…¹‘¥‘…Ñ•¹¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡Õ…Éô‘í¡•à¡Q}UI¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡Õ…É‘}Á…ÍÌô‘íÕ…É‘A…ÍÌ€ü€‰å•Ìˆ€è€‰¹¼‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡µ…É¥¹}‰åÑ•Ìô‘íQ}UI€´…¹‘¥‘…Ñ•¹‘õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡µ…É¥¹}¡•àô‘í¡•à¡Q}UI€´…¹‘¥‘…Ñ•¹°€Ä¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡É•‘ÕÑ¥½¹}™É½µ}™…¥±•‘}‰åÑ•Ìô‘í%1}9€´…¹‘¥‘…Ñ•¹‘õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡É•‘ÕÑ¥½¹}™É½µ}™…¥±•‘}¡•àô‘í¡•à¡%1}9€´…¹‘¥‘…Ñ•¹°€Ä¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘•±Ñ…}ÙÍ}…Ñ•½Éå}ÍÝ••Á}‰åÑ•Ìô‘í…¹‘¥‘…Ñ•¹€´Q=Ie}M]A}9õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘•±Ñ…}ÙÍ}…Ñ•½Éå}ÍÝ••Á}¡•àô‘í¡•à¡…¹‘¥‘…Ñ•¹€´Q=Ie}M]A}9°€Ä¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡ÁÉ•™•ÉÉ•‘}Ñ…É•Ñ}Á…ÍÌô‘í…¹‘¥‘…Ñ•¹€ðôQ=Ie}M]A}9€ü€‰å•Ìˆ€è€‰¹¼‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡¡¡½½­}Í•ÑÍ}Í…µ”ô‘í¡½½­M•ÑÍM…µ”€ü€‰å•Ìˆ€è€‰¹¼‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡…¹‘¥‘…Ñ•}¡½½­Ìô‘í…¹‘¥‘…Ñ•!½½­M•Ð¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ˆ°ˆ¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡µ¥ÍÍ¥¹}¡½½­}…‘‘É•ÍÍ•Ìô‘íµ¥ÍÍ¥¹œ¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ˆ°ˆ¤ñð€‰¹½¹”‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡Õ¹•áÁ•Ñ•‘}Á…Ñ¡}…‘‘É•ÍÍ•Ìô‘íÕ¹•áÁ•Ñ•¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ˆ°ˆ¤ñð€‰¹½¹”‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ  ‰¡…¹•‘}¡½½­}Ñ…É•Ñ}Ù…±Õ•Ìèˆ¤ì(€€€€€€€€€¥˜€¡¡…¹•¹±•¹Ñ €ôôô€À¤ì(€€€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ  ‰¹½¹”ˆ¤ì(€€€€€€€€€ô•±Í”ì(€€€€€€€€€€€™½È€¡½¹ÍÐ…‘‘È½˜¡…¹•¤É•Á½ÉÐ¹ÁÕÍ ¡€‘í¡•à¡…‘‘È¥ô€‘í½™™¥¥…±!½½­Ì¹•Ð¡…‘‘È¥ô€´ø€‘í…¹‘¥‘…Ñ•!½½­Ì¹•Ð¡…‘‘È¥õ€¤ì(€€€€€€€€€ô(€€€€€€€€€™Ì¹ÝÉ¥Ñ•¥±•Må¹Œ ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½…‘‘É•ÍÌµÉ•Á½ÉÐ¹ÑáÐˆ°É•Á½ÉÐ¹©½¥¸ ‰q¸ˆ¤€¬€‰q¸ˆ¤ì(€€€€€€€€€½¹Í½±”¹±½œ¡É•Á½ÉÐ¹©½¥¸ ‰q¸ˆ¤¤ì(€€€€€€€€€¥˜€ …Õ…É‘A…ÍÌñð€…¡½½­M•ÑÍM…µ”ñðÕ¹•áÁ•Ñ•¹±•¹Ñ ¤ÁÉ½•ÍÌ¹•á¥Ð Ä¤ì(€€€€€€€€€9=((€€€€€€´¹…µ”èI•½ÉÁ½ÍÐµ‰Õ¥±Í½ÕÉ”ÍÑ…Ñ”(€€€€€€€¥˜è…±Ý…åÌ ¤(€€€€€€€ÉÕ¸èð(€€€€€€€€€¥Ð‘¥™˜€´´I5¹µ€¹¥Ñ¡Õˆ½Ý½É­™±½ÝÌ½‰Õ¥±¹åµ°•±™}ÁÉ½•ÍÍ½È¹©Ìµ½½‰Õ¥±¹Í µ½½µ…­•}µ½¹©Ìµ½½µ½¹ÁÀµ½½±½…‘•È½±½…‘•È¹Œ‘½Ì½É•ÁÉ½‘Õ¥‰¥±¥ÑäµØÈ¸Ð¹µÍÉ¥ÁÑÌ½½µÁ…É”µÁ¹… µ±…å½ÕÐ¹©Ì€øÉ•ÁÉ½‘Õ¥‰¥±¥Ñä½ÑÉ…­•µÍ½ÕÉ”µ‘¥™˜µ…™Ñ•Èµ‰Õ¥±¹Á…Ñ (€€€€€€€€€¥ÐÍÑ…ÑÕÌ€´µÍ¡½ÉÐ€øÉ•ÁÉ½‘Õ¥‰¥±¥Ñä½¥ÐµÍÑ…ÑÕÌµ…™Ñ•Èµ‰Õ¥±¹ÑáÐ(€€€€€€€€€¥ÐÉ•ØµÁ…ÉÍ”!€øÉ•ÁÉ½‘Õ¥‰¥±¥Ñä½Í½ÕÉ”µ½µµ¥Ð¹ÑáÐ((€€€€€€´¹…µ”èUÁ±½…Í¡É¥¹¬Á…ÍÌ€Ä…ÉÑ¥™…ÑÌ(€€€€€€€¥˜è…±Ý…åÌ ¤(€€€€€€€ÕÍ•Ìè…Ñ¥½¹Ì½ÕÁ±½…µ…ÉÑ¥™…ÑØÐ(€€€€€€€Ý¥Ñ è(€€€€€€€€€¹…µ”è©•É‘…¹„µÍÑ…”Äµ¡…É‘½‘•µ‘½Ý¹É…‘”µÍ¡É¥¹¬µÁ…ÍÌÄ(€€€€€€€€€Á…Ñ èð(€€€€€€€€€€€µ½¼äÌÑäÀàÄ¹Á¹… (€€€€€€€€€€€µ½½‘™}¡…¬¹•±˜(€€€€€€€€€€€µ½½µ½¹¼(€€€€€€€€€€€µ½½µ½¹Ì(€€€€€€€€€€€µ½½µ½¹¥¤(€€€€€€€€€€€µ½½±½…‘•È½Á…Ñ ¹Œ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µØÈ¸Ð´äÌÑäÀàÄ¹Á¹… (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µØÈ¸Ðµ‘™}¡…¬¹•±˜(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½©•É‘…¹„µÍÑ…”Äµ¡…É‘½‘•µ‘½Ý¹É…‘”µÍ¡É¥¹¬µÁ…ÍÌÄ¹Á…Ñ (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…ÁÁ±¥•µÍ½ÕÉ”µ‘¥™˜¹Á…Ñ (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…ÁÁ±¥•µÍ½ÕÉ”µ‘¥™˜µÍÑ…Ð¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½¡…Í µÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½±…å½ÕÐµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½±…å½ÕÐµÙÌµ™…¥±•µÍÑ…”Ä¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½±…å½ÕÐµÙÌµ…Ñ•½ÉäµÍÝ••À¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…‘‘É•ÍÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…¹‘¥‘…Ñ”µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½Í¡É¥¹¬µÁ…ÍÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½Í¥é”µ½¹ÑÉ¥‰ÕÑ½ÉÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½ÁÉ•Ù¥½ÕÌµ…ÉÑ¥™…ÑÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½ÑÉ…­•µÍ½ÕÉ”µ‘¥™˜µ…™Ñ•Èµ‰Õ¥±¹Á…Ñ (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½¥ÐµÍÑ…ÑÕÌµ…™Ñ•Èµ‰Õ¥±¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½Í½ÕÉ”µ½µµ¥Ð¹ÑáÐ(
