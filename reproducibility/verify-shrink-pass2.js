@@ -56,8 +56,8 @@ const changed = officialHookSet.filter((address) => candidateHooks.has(address) 
 const guardPass = candidateEnd !== null && candidateEnd <= DATA_GUARD;
 const hookSetsSame = unexpected.length === 0 && missing.length === 0;
 
-fs.writeFileSync("reproducibility/official-patch-addresses.txt", [...official.keys()].sort((a, b) => a - b).map(hex).join("\n") + "\n");
-fs.writeFileSync("reproducibility/candidate-patch-addresses.txt", [...candidate.keys()].sort((a, b) => a - b).map(hex).join("\n") + "\n");
+fs.writeFileSync("reproducibility/official-patch-addresses.txt", [...official.keys()].sort((a, b) => a - b).map((address) => hex(address)).join("\n") + "\n");
+fs.writeFileSync("reproducibility/candidate-patch-addresses.txt", [...candidate.keys()].sort((a, b) => a - b).map((address) => hex(address)).join("\n") + "\n");
 
 const report = [
   `data_start=${hex(DATA_START)}`,
@@ -72,9 +72,9 @@ const report = [
   `delta_vs_preferred_hex=${hex(candidateEnd - PREFERRED_END, 1)}`,
   `preferred_target_pass=${candidateEnd <= PREFERRED_END ? "yes" : "no"}`,
   `hook_sets_same=${hookSetsSame ? "yes" : "no"}`,
-  `candidate_hooks=${candidateHookSet.map(hex).join(",")}`,
-  `missing_hook_addresses=${missing.map(hex).join(",") || "none"}`,
-  `unexpected_patch_addresses=${unexpected.map(hex).join(",") || "none"}`,
+  `candidate_hooks=${candidateHookSet.map((address) => hex(address)).join(",")}`,
+  `missing_hook_addresses=${missing.map((address) => hex(address)).join(",") || "none"}`,
+  `unexpected_patch_addresses=${unexpected.map((address) => hex(address)).join(",") || "none"}`,
   "changed_hook_target_values:",
 ];
 
