@@ -12,30 +12,27 @@ jobs:
     env:
       OFFICIAL_PNACH_SHA256: 8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214
       OFFICIAL_ELF_SHA256: 43eba6baafba8aa20bfa2b2c9d8c7e5fcb24eb30ce2d9c92f2bbd4eea8bacf30
-      DATA_GUARD: "0x30809C"
       FAILED_STAGE1_ARTIFACT_ID: "8243811599"
       CATEGORY_SWEEP_ARTIFACT_ID: "8238123666"
     steps:
       - uses: actions/checkout@v2
 
-      - name: Setup original ps2dev environment
+      - name: Setup official-style ps2dev environment
         run: |
           sudo apt-get update
           sudo apt-get install -y nodejs unzip
           wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
           sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
 
-      - name: Apply shrink pass 1 patch
+      - name: Apply shrink pass patch
         run: |
-          mkdir -p reproducibility
           git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
           git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
           git diff -- mod/mod.cpp > reproducibility/applied-source-diff.patch
           git diff --stat -- mod/mod.cpp > reproducibility/applied-source-diff-stat.txt
 
-      - name: Record shrink-pass plan
+      - name: Record shrink pass plan
         run: |
-          mkdir -p reproducibility
           {
             echo "probe=Jerdana Stage 1 hardcoded 133->130 downgrade shrink pass 1"
             echo "stage=Stage 1 only"
@@ -44,17 +41,15 @@ jobs:
             echo "category=1"
             echo "write_target=slot+0x00 only"
             echo "unrelated_features_removed=no"
-            echo "options_page_replacement=already used by rejected candidate and preserved here"
-            echo "state_representation=saved_slot,original_config,target_config,outfit_state"
-            echo "status_mapping=0 READY; 1 ACTIVE; 2 DONE; 3 REFUSED; 4 WRITEFAIL_SAFE; 5 ACTIVE_BADID; 6 UNSAFE"
-            echo "controls=X apply; Square restore; Triangle back only when outfit_state is not unresolved; Circle unused; L2 unused"
-            echo "one_apply_restore_cycle_per_session=yes"
-            echo "compact_display=J%d a%d id:%d"
-            echo "optimizations=single outfit_state replaces apply_active/test_complete/status; single display format replaces seven status strings; reference lookup helper removed; item id helper converted to macro; apply/restore made static inline; duplicate target display lookup removed; blocked Triangle sound feedback removed while unresolved"
+            echo "state=saved_slot,original_config,target_config,outfit_state"
+            echo "status=0 READY;1 ACTIVE;2 DONE;3 REFUSED;4 WRITEFAIL_SAFE;5 ACTIVE_BADID;6 UNSAFE"
+            echo "controls=X apply; Square restore; Triangle back only when not unresolved; Circle unused; L2 unused"
+            echo "one_cycle_per_session=yes"
+            echo "display=J%d a%d id:%d"
+            echo "optimizations=single state code; one status format; removed reference lookup helper; macro item id/slot; no target display lookup; blocked Triangle sound feedback removed"
             echo "failed_candidate_end=0x3082D4"
             echo "required_guard=0x30809C"
             echo "preferred_target=0x307FC4"
-            echo "failed_candidate_contributors=outfit_item_id about 4 asm instructions; get_outfit_state about 33; stage1_apply about 105; stage1_restore about 67; status strings about 109 bytes; repeated helper calls in apply/restore/display"
           } | tee reproducibility/shrink-pass-report.txt
 
       - name: Build with original script
@@ -66,16 +61,12 @@ jobs:
           cd mod
           ./build.sh
 
-      - name: Fetch official v2.4 baseline
-        run: |
-          mkdir -p reproducibility
-          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
-          wget -O reproducibility/official-v2.4-df_hack.elf https://github.com/monster860/ntdf-mod/releases/download/v2.4/df_hack.elf
-
-      - name: Fetch comparison artifacts
+      - name: Fetch official v2.4 baseline and comparison artifacts
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          wget -O reproducibility/official-v2.4-df_hack.elf https://github.com/monster860/ntdf-mod/releases/download/v2.4/df_hack.elf
           mkdir -p reproducibility/previous/failed-stage1 reproducibility/previous/category-sweep
           if curl -fL -H "Authorization: Bearer ${GITHUB_TOKEN}" -o reproducibility/previous/failed-stage1.zip "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${FAILED_STAGE1_ARTIFACT_ID}/zip"; then
             unzip -q reproducibility/previous/failed-stage1.zip -d reproducibility/previous/failed-stage1
@@ -90,11 +81,10 @@ jobs:
             echo "category_sweep_artifact_downloaded=no" >> reproducibility/previous-artifacts-report.txt
           fi
 
-      - name: Compare hashes and layouts
+      - name: Compare hashes, layouts, hooks, and guard
         run: |
-          mkdir -p reproducibility
           GENERATED_PNACH="$(sha256sum mod/934F9081.pnach | awk '{print $1}')"
-          GENERATED_ELF="$(sha256sum mod/df_hack.elf | awk '{print $1}')"
+          GENERATEED_ELF="$(sha256sum mod/df_hack.elf | awk '{print $1}')"
           OFFICIAL_PNACH="$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')"
           OFFICIAL_ELF="$(sha256sum reproducibility/official-v2.4-df_hack.elf | awk '{print $1}')"
           {
@@ -105,23 +95,17 @@ jobs:
             echo "official_elf=${OFFICIAL_ELF}"
             echo "generated_elf=${GENERATED_ELF}"
             wc -l reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach
-            sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
+            sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch reproducibility/verify-shrink-pass1.js
           } | tee reproducibility/hash-report.txt
           test "$OFFICIAL_PNACH" = "$OFFICIAL_PNACH_SHA256"
           test "$OFFICIAL_ELF" = "$OFFICIAL_ELF_SHA256"
           node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-report.txt
-          if test -f reproducibility/previous/failed-stage1/mod/934F9081.pnach; then
-            node scripts/compare-pnach-layout.js reproducibility/previous/failed-stage1/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-failed-stage1.txt
-          else
-            echo "failed Stage 1 PNACH unavailable" | tee reproducibility/layout-vs-failed-stage1.txt
-          fi
-          if test -f reproducibility/previous/category-sweep/mod/934F9081.pnach; then
-            node scripts/compare-pnach-layout.js reproducibility/previous/category-sweep/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-category-sweep.txt
-          else
-            echo "category sweep PNACH unavailable" | tee reproducibility/layout-vs-category-sweep.txt
-          fi
+          test ! -f reproducibility/previous/failed-stage1/mod/934F9081.pnach || node scripts/compare-pnach-layout.js reproducibility/previous/failed-stage1/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-failed-stage1.txt
+          test ! -f reproducibility/previous/category-sweep/mod/934F9081.pnach || node scripts/compare-pnach-layout.js reproducibility/previous/category-sweep/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-category-sweep.txt
+          node reproducibility/verify-shrink-pass1.js
 
       - name: Measure shrink pass size contributors
+        if: always()
         run: |
           {
             echo "generated_status_strings:"
@@ -131,28 +115,41 @@ jobs:
             grep -n "_Z12stage1_applyv\|_Z14stage1_restorev\|outfit_item_id\|get_outfit_state" mod/mod.s || true
           } | tee reproducibility/size-contributors-report.txt
 
-      - name: Verify patch addresses and guard
+      - name: Record post-build source state
+        if: always()
         run: |
-          node <<'NODE'
-          const fs = require("fs");
-          const DATA_START = 0x3043B0;
-          const DATA_GUARD = 0x30809C;
-          const FAILED_END = 0x3082D4;
-          const CATEGORY_SWEEP_END = 0x307FC4;
-          function parse(path) {
-            const text = fs.readFileSync(path, "utf8");
-            const map = new Map();
-            for (const line of text.split(/\r?\n/)) {
-              const m = line.match(/^patch=0,EE,([0-9A-Fa-f]+),word,([0-9A-Fa-f]{8})$/);
-              if (m) map.set(parseInt(m[1], 16), m[2].toUpperCase());
-            }
-            return map;
-          }
-          function hex(n, width = 6) {
-            return (n < 0 ? "-0x" + (-n).toString(16).toUpperCase() : "0x" + n.toString(16).toUpperCase().padStart(width, "0"));
-          }
-          function dataEnd(map) {
-            let addr = DATA_START;
-            let last = null;
-            while (map.has(addr)) {
-              last = addr \€€€€€€€€€€€€…‘‘È€¬ô€Ðì(€€€€€€€€€€€ô(€€€€€€€€€€€É•ÑÕÉ¸±…ÍÐì(€€€€€€€€€ô(€€€€€€€€€™Õ¹Ñ¥½¸¡½½­Ì¡µ…À¤ì(€€€€€€€€€€€½¹ÍÐ•¹€ô‘…Ñ…¹¡µ…À¤ì(€€€€€€€€€€€½¹ÍÐ½ÕÐ€ô¹•Ü5…À ¤ì(€€€€€€€€€€€™½È€¡½¹ÍÐm…‘‘È°Ù…±Õ•t½˜µ…À¤ì(€€€€€€€€€€€€€¥˜€ „¡…‘‘È€øôQ}MQIP€Éˆ•¹€„ôô¹Õ±°€˜˜…‘‘È€ðô•¹¤¤½ÕÐ¹Í•Ð¡…‘‘È°Ù…±Õ”¤ì(€€€€€€€€€€€ô(€€€€€€€€€€€É•ÑÕÉ¸½ÕÐì(€€€€€€€€€ô(€€€€€€€€€½¹ÍÐ½™™¥¥…°€ôÁ…ÉÍ” ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µØÈ¸Ð´äÌÑäÀàÄ¹Á¹… ˆ¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ”€ôÁ…ÉÍ” ‰µ½¼äÌÑäÀàÄ¹Á¹… ˆ¤ì(€€€€€€€€€½¹ÍÐ½™™¥¥…±!½½­Ì€ô¡½½­Ì¡½™™¥¥…°¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ•!½½­Ì€ô¡½½­Ì¡…¹‘¥‘…Ñ”¤ì(€€€€€€€€€½¹ÍÐ½™™¥¥…±!½½­M•Ð€ôl¸¸¹½™™¥¥…±!½½­Ì¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ•!½½­M•Ð€ôl¸¸¹…¹‘¥‘…Ñ•!½½­Ì¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤ì(€€€€€€€€€½¹ÍÐ…¹‘¥‘…Ñ•¹€ô‘…Ñ…¹¡…¹‘¥‘…Ñ”¤ì(€€€€€€€€€½¹ÍÐÕ¹•áÁ•Ñ•€ô…¹‘¥‘…Ñ•!½½­M•Ð¹™¥±Ñ•È ¡…‘‘È¤€ôø€…½™™¥¥…±!½½­Ì¹¡…Ì¡…‘‘È¤¤ì(€€€€€€€€€½¹ÍÐµ¥ÍÍ¥¹œ€ô½™™¥¥…±!½½­M•Ð¹™¥±Ñ•È ¡…‘‘È¤€ôø€……¹‘¥‘…Ñ•!½½­Ì¹¡…Ì¡…‘‘È¤¤ì(€€€€€€€€€½¹ÍÐ¡…¹•€ô½™™¥¥…±!½½­M•Ð¹™¥±Ñ•È ¡…‘‘È¤€ôø…¹‘¥‘…Ñ•!½½­Ì¹¡…Ì¡…‘‘È¤€˜˜½™™¥¥…±!½½­Ì¹•Ð¡…‘‘È¤€„ôô…¹‘¥‘…Ñ•!½½­Ì¹•Ð¡…‘‘È¤¤ì(€€€€€€€€€½¹ÍÐÕ…É‘A…ÍÌ€ô…¹‘¥‘…Ñ•¹€„ôô¹Õ±°€˜˜…¹‘¥‘…Ñ•¹€ðôQ}UIì(€€€€€€€€€½¹ÍÐ¡½½­M•ÑÍM…µ”€ôÕ¹•áÁ•Ñ•¹±•¹Ñ €ôôô€À€˜˜µ¥ÍÍ¥¹œ¹±•¹Ñ €ôôô€Àì(€€€€€€€€€™Ì¹ÝÉ¥Ñ•¥±•Må¹Œ ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐˆ°l¸¸¹½™™¥¥…°¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ‰q¸ˆ¤€¬€‰q¸ˆ¤ì(€€€€€€€€€™Ì¹ÝÉ¥Ñ•¥±•Må¹Œ ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½…¹‘¥‘…Ñ”µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐˆ°l¸¸¹…¹‘¥‘…Ñ”¹­•åÌ ¥t¹Í½ÉÐ ¡„°ˆ¤€ôø„€´ˆ¤¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ‰q¸ˆ¤€¬€‰q¸ˆ¤ì(€€€€€€€€€½¹ÍÐÉ•Á½ÉÐ€ômtì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘…Ñ…}ÍÑ…ÉÐô‘í¡•à¡Q}MQIP¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘…Ñ…}•¹ô‘í¡•à¡…¹‘¥‘…Ñ•¹¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡Õ…Éô‘í¡•à¡Q}UI¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡Õ…É‘}Á…ÍÌô‘íÕ…É‘A…ÍÌ€ü€‰å•Ìˆ€è€‰¹¼‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡µ…É¥¹}‰åÑ•Ìô‘íQ}UI€´…¹‘¥‘…Ñ•¹‘õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡µ…É¥¹}¡•àô‘í¡•à¡Q}UI€´…¹‘¥‘…Ñ•¹°€Ä¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡É•‘ÕÑ¥½¹}™É½µ}™…¥±•‘}‰åÑ•Ìô‘í%1}9€´…¹‘¥‘…Ñ•¹‘õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡É•‘ÕÑ¥½¹}™É½µ}™…¥±•‘}¡•àô‘í¡•à¡%1}9€´…¹‘¥‘…Ñ•¹°€Ä¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘•±Ñ…}ÙÍ}…Ñ•½Éå}ÍÝ••Á}‰åÑ•Ìô‘í…¹‘¥‘…Ñ•¹€´Q=Ie}M]A}9õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡‘•±Ñ…}ÙÍ}…Ñ•½Éå}ÍÝ••Á}¡•àô‘í¡•à¡…¹‘¥‘…Ñ•¹€´Q=Ie}M]A}9°€Ä¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡ÁÉ•™•ÉÉ•‘}Ñ…É•Ñ}Á…ÍÌô‘í…¹‘¥‘…Ñ•¹€ðôQ=Ie}M]A}9€ü€‰å•Ìˆ€è€‰¹¼‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡¡¡½½­}Í•ÑÍ}Í…µ”ô‘í¡½½­M•ÑÍM…µ”€ü€‰å•Ìˆ€è€‰¹¼‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡…¹‘¥‘…Ñ•}¡½½­Ìô‘í…¹‘¥‘…Ñ•!½½­M•Ð¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ˆ°ˆ¥õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡µ¥ÍÍ¥¹}¡½½­}…‘‘É•ÍÍ•Ìô‘íµ¥ÍÍ¥¹œ¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ˆ°ˆ¤ñð€‰¹½¹”‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ ¡Õ¹•áÁ•Ñ•‘}Á…Ñ¡}…‘‘É•ÍÍ•Ìô‘íÕ¹•áÁ•Ñ•¹µ…À ¡…‘‘È¤€ôø¡•à¡…‘‘È¤¤¹©½¥¸ ˆ°ˆ¤ñð€‰¹½¹”‰õ€¤ì(€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ  ‰¡…¹•‘}¡½½­}Ñ…É•Ñ}Ù…±Õ•Ìèˆ¤ì(€€€€€€€€€¥˜€¡¡…¹•¹±•¹Ñ €ôôô€À¤ì(€€€€€€€€€€€É•Á½ÉÐ¹ÁÕÍ  ‰¹½¹”ˆ¤ì(€€€€€€€€€ô•±Í”ì(€€€€€€€€€€€™½È€¡½¹ÍÐ…‘‘È½˜¡…¹•¤É•Á½ÉÐ¹ÁÕÍ ¡€‘í¡•à¡…‘‘È¥ô€‘í½™™¥¥…±!½½­Ì¹•Ð¡…‘‘È¥ô€´ø€‘í…¹‘¥‘…Ñ•!½½­Ì¹•Ð¡…‘‘È¥õ€¤ì(€€€€€€€€€ô(€€€€€€€€€™Ì¹ÝÉ¥Ñ•¥±•Må¹Œ ‰É•ÁÉ½‘Õ¥‰¥±¥Ñä½…‘‘É•ÍÌµÉ•Á½ÉÐ¹ÑáÐˆ°É•Á½ÉÐ¹©½¥¸ ‰q¸ˆ¤€¬€‰q¸ˆ¤ì(€€€€€€€€€½¹Í½±”¹±½œ¡É•Á½ÉÐ¹©½¥¸ ‰q¸ˆ¤¤ì(€€€€€€€€€¥˜€ …Õ…É‘A…ÍÌñð€…¡½½­M•ÑÍM…µ”ñðÕ¹•áÁ•Ñ•¹±•¹Ñ ¤ÁÉ½•ÍÌ¹•á¥Ð Ä¤ì(€€€€€€€€€9=((€€€€€€´¹…µ”èI•½ÉÁ½ÍÐµ‰Õ¥±Í½ÕÉ”ÍÑ…Ñ”(€€€€€€€¥˜è…±Ý…åÌ ¤(€€€€€€€ÉÕ¸èð(€€€€€€€€€¥Ð‘¥™˜€´´I5¹µ€¹¥Ñ¡Õˆ½Ý½É­™±½ÝÌ½‰Õ¥±¹åµ°•±™}ÁÉ½•ÍÍ½È¹©Ìµ½½‰Õ¥±¹Í µ½½µ…­•}µ½¹©Ìµ½½µ½¹ÁÀµ½½±½…‘•È½±½…‘•È¹Œ‘½Ì½É•ÁÉ½‘Õ¥‰¥±¥ÑäµØÈ¸Ð¹µÍÉ¥ÁÑÌ½½µÁ…É”µÁ¹… µ±…å½ÕÐ¹©Ì€øÉ•ÁÉ½‘Õ¥‰¥±¥Ñä½ÑÉ…­•µÍ½ÕÉ”µ‘¥™˜µ…™Ñ•Èµ‰Õ¥±¹Á…Ñ (€€€€€€€€€¥ÐÍÑ…ÑÕÌ€´µÍ¡½ÉÐ€øÉ•ÁÉ½‘Õ¥‰¥±¥Ñä½¥ÐµÍÑ…ÑÕÌµ…™Ñ•Èµ‰Õ¥±¹ÑáÐ(€€€€€€€€€¥ÐÉ•ØµÁ…ÉÍ”!€øÉ•ÁÉ½‘Õ¥‰¥±¥Ñä½Í½ÕÉ”µ½µµ¥Ð¹ÑáÐ((€€€€€€´¹…µ”èUÁ±½…Í¡É¥¹¬Á…ÍÌ€Ä…ÉÑ¥™…ÑÌ(€€€€€€€¥˜è…±Ý…åÌ ¤(€€€€€€€ÕÍ•Ìè…Ñ¥½¹Ì½ÕÁ±½…µ…ÉÑ¥™…ÑØÐ(€€€€€€€Ý¥Ñ è(€€€€€€€€€¹…µ”è©•É‘…¹„µÍÑ…”Äµ¡…É‘½‘•µ‘½Ý¹É…‘”µÍ¡É¥¹¬µÁ…ÍÌÄ(€€€€€€€€€Á…Ñ èð(€€€€€€€€€€€µ½¼äÌÑäÀàÄ¹Á¹… (€€€€€€€€€€€µ½½‘™}¡…¬¹•±˜(€€€€€€€€€€€µ½½µ½¹¼(€€€€€€€€€€€µ½½µ½¹Ì(€€€€€€€€€€€µ½½µ½¹¥¤(€€€€€€€€€€€µ½½±½…‘•È½Á…Ñ ¹Œ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µØÈ¸Ð´äÌÑäÀàÄ¹Á¹… (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µØÈ¸Ðµ‘™}¡…¬¹•±˜(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½©•É‘…¹„µÍÑ…”Äµ¡…É‘½‘•µ‘½Ý¹É…‘”µÍ¡É¥¹¬µÁ…ÍÌÄ¹Á…Ñ (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…ÁÁ±¥•µÍ½ÕÉ”µ‘¥™˜¹Á…Ñ (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…ÁÁ±¥•µÍ½ÕÉ”µ‘¥™˜µÍÑ…Ð¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½¡…Í µÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½±…å½ÕÐµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½±…å½ÕÐµÙÌµ™…¥±•µÍÑ…”Ä¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½±…å½ÕÐµÙÌµ…Ñ•½ÉäµÍÝ••À¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…‘‘É•ÍÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½½™™¥¥…°µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½…¹‘¥‘…Ñ”µÁ…Ñ µ…‘‘É•ÍÍ•Ì¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½Í¡É¥¹¬µÁ…ÍÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½Í¥é”µ½¹ÑÉ¥‰ÕÑ½ÉÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½ÁÉ•Ù¥½ÕÌµ…ÉÑ¥™…ÑÌµÉ•Á½ÉÐ¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½ÑÉ…­•µÍ½ÕÉ”µ‘¥™˜µ…™Ñ•Èµ‰Õ¥±¹Á…Ñ (€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½¥ÐµÍÑ…ÑÕÌµ…™Ñ•Èµ‰Õ¥±¹ÑáÐ(€€€€€€€€€€€É•ÁÉ½‘Õ¥‰¥±¥Ñä½Í½ÕÉ”µ½µµ¥Ð¹ÑáÐ(
+          git diff -- README.md .github/workflows/build.yml .github/workflows/jerdana-stage1-hardcoded-downgrade-shrink-pass1.yml elf_processor.js mod/build.sh mod/make_mod.js mod/mod.cpp mod/loader/loader.c docs/reproducibility-v2.4.md scripts/compare-pnach-layout.js reproducibility/verify-shrink-pass1.js > reproducibility/tracked-source-diff-after-build.patch
+          git status --short > reproducibility/git-status-after-build.txt
+          git rev-parse HEAD > reproducibility/source-commit.txt
+
+      - name: Upload shrink pass 1 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerdana-stage1-hardcoded-downgrade-shrink-pass1
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.o
+            mod/mod.s
+            mod/mod.ii
+            mod/loader/patch.c
+            reproducibility/official-v2.4-934F9081.pnach
+            reproducibility/official-v2.4-df_hack.elf
+            reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
+            reproducibility/verify-shrink-pass1.js
+            reproducibility/applied-source-diff.patch
+            reproducibility/applied-source-diff-stat.txt
+            reproducibility/hash-report.txt
+            reproducibility/layout-report.txt
+            reproducibility/layout-vs-failed-stage1.txt
+            reproducibility/layout-vs-category-sweep.txt
+            reproducibility/address-report.txt
+            reproducibility/official-patch-addresses.txt
+            reproducibility/candidate-patch-addresses.txt
+            reproducibility/shrink-pass-report.txt
+            reproducibility/size-contributors-report.txt
+            reproducibility/previous-artifacts-report.txt
+            reproducibility/tracked-source-diff-after-build.patch
+            reproducibility/git-status-after-build.txt
+            reproducibility/source-commit.txt
