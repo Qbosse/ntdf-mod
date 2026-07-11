@@ -1,0 +1,168 @@
+diff --git a/mod/mod.cpp b/mod/mod.cpp
+index 95c3804..ae0f351 100644
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -12,6 +12,9 @@
+ #define StartExteriorReplacementLoad ((void (*)(int, int, char*))0x17b2b0)
+ #define StartEnterInterior ((void (*)(int, int, int, char*))0x17b0c0)
+ #define GiveItemToHero ((void (*)(int, int, bool))0x176440)
++#define GetCurrentEquipmentSlot ((int (*)(int, int))0x1AC1A0)
++#define GetItemManager ((int (*)())0x1AE100)
++#define GetItemConfig ((int (*)(int, int))0x1AE5F0)
+ #define load_area ((void (*)(int, int, int, int, int, int, int, char*, int, int))0x120ba8)
+ #define get_area_file ((int(*)(int))0x21a6c8)
+ #define DisplayDialogText ((void (*)(const char *))0x1794F8)
+@@ -129,40 +132,6 @@ char *hack_menu_items[] = {
+ char *hex_digits = "0""\0""1""\0""2""\0""3""\0""4""\0""5""\0""6""\0""7""\0""8""\0""9""\0""a""\0""b""\0""c""\0""d""\0""e""\0""f";
+ char fade_color[] = {0x80, 0x0, 0x80, 0x0};
+ 
+-const int NUM_OPTIONS = 4;
+-char *options_menu_items[] = {
+-	"Debug Mode",
+-	"Suppress Loads",
+-	"Show Coordinates",
+-	"Show Alignments"
+-};
+-char *options_menu_description[] = {
+-	"Enables the debug mode\n"
+-	"that's part of the game.\n"
+-	"Usually requires reloading\n"
+-	"the current area to take effect.",
+-	
+-	"Disables any seamless load\n"
+-	"triggers. However, this does\n"
+-	"not affect any that work via,\n"
+-	"for example, pressing square.",
+-
+-	"Enables the coordinate display\n"
+-	"Warning: can cause game crashes\n"
+-	"if there's too much text on the\n"
+-	"screen.",
+-
+-	"Displays alignemtns of enemies\n"
+-	"Can causes crashes if there's\n"
+-	"too much text on the screen.\n"
+-};
+-bool *options_menu_flags[] = {
+-	&debug_mode_on,
+-	&suppress_loads,
+-	&coords_display,
+-	&alignment_display,
+-};
+-
+ char *save_game_text = "Save Game (01)";
+ unsigned char save_page = 1;
+ 
+@@ -188,6 +157,11 @@ int current_ledge_fly = 0;
+ int ledge_fly_consequence = 0;
+ int load_delay = 0;
+ 
++int saved_slot = 0;
++int original_config = 0;
++int target_config = 0;
++int outfit_state = 0;
++
+ enum MenuState {
+ 	MENU_OFF, MENU_MAIN, MENU_LOAD_AREA, MENU_GIVE_ITEM_ID, MENU_GIVE_ITEM_AMT, MENU_EDIT_NP, MENU_EDIT_FLAGS, MENU_OPTIONS
+ };
+@@ -268,6 +242,61 @@ void editable_number(int &number, short &sel_digit, int cbi, short min_digits, s
+ 	}
+ }
+ 
++#define OUTFIT_ID(config) ((config) ? *((short*)((config) + 0x0c)) : -1)
++#define OUTFIT_SLOT() ({ int items = *((int*)0x35c7ec); items ? GetCurrentEquipmentSlot(items, 1) : 0; })
++#define OUTFIT_UNRESOLVED() (outfit_state == 1 || outfit_state > 4)
++
++static inline void stage1_apply() {
++	if(outfit_state || saved_slot || original_config || target_config) {
++		outfit_state = 3;
++		return;
++	}
++	int slot = OUTFIT_SLOT();
++	int config = slot ? *((int*)slot) : 0;
++	int manager = GetItemManager();
++	int candidate = manager ? GetItemConfig(manager, 130) : 0;
++	if(!slot || !config || OUTFIT_ID(config) != 133 || !candidate || OUTFIT_ID(candidate) != 130) {
++		outfit_state = 3;
++		return;
++	}
++	saved_slot = slot;
++	original_config = config;
++	target_config = candidate;
++	outfit_state = 1;
++	*((int*)slot) = candidate;
++	int active_config = *((int*)slot);
++	int active_id = OUTFIT_ID(active_config);
++	if(active_config == candidate) {
++		outfit_state = active_id == 130 ? 1 : 5;
++	} else if(active_config == config) {
++		saved_slot = original_config = target_config = 0;
++		outfit_state = 4;
++	} else {
++		outfit_state = 6;
++	}
++}
++
++static inline void stage1_restore() {
++	if(outfit_state != 1 && outfit_state != 5) {
++		if(outfit_state == 0) outfit_state = 3;
++		return;
++	}
++	int slot = OUTFIT_SLOT();
++	int config = slot ? *((int*)slot) : 0;
++	if(!slot || slot != saved_slot || !original_config || !target_config || config != target_config) {
++		outfit_state = 6;
++		return;
++	}
++	*((int*)slot) = original_config;
++	int active_config = *((int*)slot);
++	if(active_config == original_config && OUTFIT_ID(active_config) == 133) {
++		saved_slot = original_config = target_config = 0;
++		outfit_state = 2;
++	} else {
++		outfit_state = 6;
++	}
++}
++
+ void CancelLedgeFly(bool exterior) {
+ 	if(*((int*)(*((int*)0x35c7d4) + 0x144)) != 0x25) return; // don't be overzealous.
+ 	*((int*)(*((int*)0x35c7d4) + 0x144)) = 1; // actually cancel it.
+@@ -681,26 +710,25 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 			append_str(char_buf, "\n\n  false", char_buf_len);
+ 		}
+ 	} else if(state == MENU_OPTIONS) {
+-		if(hacks_menu_idx >= NUM_OPTIONS) hacks_menu_idx = 0;
+-		if(hacks_menu_idx < 0) hacks_menu_idx = NUM_OPTIONS-1;
+-		
+-		if(cbi & 0x10) {
++		if((cbi & 0x10) && !OUTFIT_UNRESOLVED()) {
+ 			playmenusound(0x6);
+ 			state = MENU_MAIN;
+ 			hacks_menu_idx = 0;
+ 			return (void*)0;
++		} else if(cbi & 0x80) {
++			stage1_restore();
+ 		} else if(cbi & 0x40) {
+-			*options_menu_flags[hacks_menu_idx] = !(*options_menu_flags[hacks_menu_idx]);
++			stage1_apply();
++		} else if(cbi & 0x10) {
++			playmenusound(0x6);
+ 		}
+ 
+-		for(int i = 0; i < NUM_OPTIONS; i++) {
+-			if(i == hacks_menu_idx) append_str(char_buf, "\x01\x03\x09\x02\x03\xc8\x73\x32\x80", char_buf_len);
+-			append_str(char_buf, options_menu_items[i], char_buf_len);
+-			append_str(char_buf, *options_menu_flags[i] ? " - On\n" : " - Off\n", char_buf_len);
+-			if(i == hacks_menu_idx) append_str(char_buf, "\x01\x03\x09\x02\x03\x80\x80\x80\x80", char_buf_len);
+-		}
+-		append_str(char_buf, "\n\n", char_buf_len);
+-		append_str(char_buf, options_menu_description[hacks_menu_idx], char_buf_len);
++		int slot = OUTFIT_SLOT();
++		int config = slot ? *((int*)slot) : 0;
++		if((outfit_state == 1 || outfit_state == 5) && (slot != saved_slot || config != target_config)) outfit_state = 6;
++		char line[32];
++		sprintf(line, "J%d a%d id:%d", outfit_state, OUTFIT_UNRESOLVED() ? 1 : 0, OUTFIT_ID(config));
++		append_str(char_buf, line, char_buf_len);
+ 
+ 	} else {
+ 		state = MENU_OFF;

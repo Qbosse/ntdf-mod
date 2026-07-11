@@ -1,0 +1,248 @@
+name: Jerdana Stage 1 Downgrade Shrink Pass 1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - jerdana-stage1-hardcoded-133-to-130-shrink-pass1
+
+jobs:
+  shrink-pass1:
+    runs-on: ubuntu-latest
+    env:
+      OFFICIAL_PNACH_SHA256: 8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214
+      OFFICIAL_ELF_SHA256: 43eba6baafba8aa20bfa2b2c9d8c7e5fcb24eb30ce2d9c92f2bbd4eea8bacf30
+      DATA_GUARD: "0x30809C"
+      FAILED_STAGE1_ARTIFACT_ID: "8243811599"
+      CATEGORY_SWEEP_ARTIFACT_ID: "8238123666"
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup original ps2dev environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nodejs unzip
+          wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
+          sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
+
+      - name: Apply shrink pass 1 patch
+        run: |
+          mkdir -p reproducibility
+          git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
+          git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
+          git diff -- mod/mod.cpp > reproducibility/applied-source-diff.patch
+          git diff --stat -- mod/mod.cpp > reproducibility/applied-source-diff-stat.txt
+
+      - name: Record shrink-pass plan
+        run: |
+          mkdir -p reproducibility
+          {
+            echo "probe=Jerdana Stage 1 hardcoded 133->130 downgrade shrink pass 1"
+            echo "stage=Stage 1 only"
+            echo "installed=no"
+            echo "runtime_tested=no"
+            echo "category=1"
+            echo "write_target=slot+0x00 only"
+            echo "unrelated_features_removed=no"
+            echo "options_page_replacement=already used by rejected candidate and preserved here"
+            echo "state_representation=saved_slot,original_config,target_config,outfit_state"
+            echo "status_mapping=0 READY; 1 ACTIVE; 2 DONE; 3 REFUSED; 4 WRITEFAIL_SAFE; 5 ACTIVE_BADID; 6 UNSAFE"
+            echo "controls=X apply; Square restore; Triangle back only when outfit_state is not unresolved; Circle unused; L2 unused"
+            echo "one_apply_restore_cycle_per_session=yes"
+            echo "compact_display=J%d a%d id:%d"
+            echo "optimizations=single outfit_state replaces apply_active/test_complete/status; single display format replaces seven status strings; reference lookup helper removed; item id helper converted to macro; apply/restore made static inline; duplicate target display lookup removed"
+            echo "failed_candidate_end=0x3082D4"
+            echo "required_guard=0x30809C"
+            echo "preferred_target=0x307FC4"
+            echo "failed_candidate_contributors=outfit_item_id about 4 asm instructions; get_outfit_state about 33; stage1_apply about 105; stage1_restore about 67; status strings about 109 bytes; repeated helper calls in apply/restore/display"
+          } | tee reproducibility/shrink-pass-report.txt
+
+      - name: Build with original script
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PS2SDK=$PS2DEV/ps2sdk
+          export GSKIT=$PS2DEV/gsKit
+          export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin
+          cd mod
+          ./build.sh
+
+      - name: Fetch official v2.4 baseline
+        run: |
+          mkdir -p reproducibility
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          wget -O reproducibility/official-v2.4-df_hack.elf https://github.com/monster860/ntdf-mod/releases/download/v2.4/df_hack.elf
+
+      - name: Fetch comparison artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p reproducibility/previous/failed-stage1 reproducibility/previous/category-sweep
+          if curl -fL -H "Authorization: Bearer ${GITHUB_TOKEN}" -o reproducibility/previous/failed-stage1.zip "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${FAILED_STAGE1_ARTIFACT_ID}/zip"; then
+            unzip -q reproducibility/previous/failed-stage1.zip -d reproducibility/previous/failed-stage1
+            echo "failed_stage1_artifact_downloaded=yes" > reproducibility/previous-artifacts-report.txt
+          else
+            echo "failed_stage1_artifact_downloaded=no" > reproducibility/previous-artifacts-report.txt
+          fi
+          if curl -fL -H "Authorization: Bearer ${GITHUB_TOKEN}" -o reproducibility/previous/category-sweep.zip "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${CATEGORY_SWEEP_ARTIFACT_ID}/zip"; then
+            unzip -q reproducibility/previous/category-sweep.zip -d reproducibility/previous/category-sweep
+            echo "category_sweep_artifact_downloaded=yes" >> reproducibility/previous-artifacts-report.txt
+          else
+            echo "category_sweep_artifact_downloaded=no" >> reproducibility/previous-artifacts-report.txt
+          fi
+
+      - name: Compare hashes and layouts
+        run: |
+          mkdir -p reproducibility
+          GENERATED_PNACH="$(sha256sum mod/934F9081.pnach | awk '{print $1}')"
+          GENERATED_ELF="$(sha256sum mod/df_hack.elf | awk '{print $1}')"
+          OFFICIAL_PNACH="$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')"
+          OFFICIAL_ELF="$(sha256sum reproducibility/official-v2.4-df_hack.elf | awk '{print $1}')"
+          {
+            echo "expected_official_pnach=${OFFICIAL_PNACH_SHA256}"
+            echo "official_pnach=${OFFICIAL_PNACH}"
+            echo "generated_pnach=${GENERATED_PNACH}"
+            echo "expected_official_elf=${OFFICIAL_ELF_SHA256}"
+            echo "official_elf=${OFFICIAL_ELF}"
+            echo "generated_elf=${GENERATED_ELF}"
+            wc -l reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach
+            sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
+          } | tee reproducibility/hash-report.txt
+          test "$OFFICIAL_PNACH" = "$OFFICIAL_PNACH_SHA256"
+          test "$OFFICIAL_ELF" = "$OFFICIAL_ELF_SHA256"
+          node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-report.txt
+          if test -f reproducibility/previous/failed-stage1/mod/934F9081.pnach; then
+            node scripts/compare-pnach-layout.js reproducibility/previous/failed-stage1/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-failed-stage1.txt
+          else
+            echo "failed Stage 1 PNACH unavailable" | tee reproducibility/layout-vs-failed-stage1.txt
+          fi
+          if test -f reproducibility/previous/category-sweep/mod/934F9081.pnach; then
+            node scripts/compare-pnach-layout.js reproducibility/previous/category-sweep/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-category-sweep.txt
+          else
+            echo "category sweep PNACH unavailable" | tee reproducibility/layout-vs-category-sweep.txt
+          fi
+
+      - name: Measure shrink pass size contributors
+        run: |
+          {
+            echo "generated_status_strings:"
+            grep -n "J%d a%d id:%d\|READY\|ACTIVE\|WRITEFAIL\|UNSAFE\|REFUSED" mod/mod.s || true
+            echo
+            echo "stage1_symbols_if_not_inlined:"
+            grep -n "_Z12stage1_applyv\|_Z14stage1_restorev\|outfit_item_id\|get_outfit_state" mod/mod.s || true
+          } | tee reproducibility/size-contributors-report.txt
+
+      - name: Verify patch addresses and guard
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const DATA_START = 0x3043B0;
+          const DATA_GUARD = 0x30809C;
+          const FAILED_END = 0x3082D4;
+          const CATEGORY_SWEEP_END = 0x307FC4;
+          function parse(path) {
+            const text = fs.readFileSync(path, "utf8");
+            const map = new Map();
+            for (const line of text.split(/\r?\n/)) {
+              const m = line.match(/^patch=0,EE,([0-9A-Fa-f]+),word,([0-9A-Fa-f]{8})$/);
+              if (m) map.set(parseInt(m[1], 16), m[2].toUpperCase());
+            }
+            return map;
+          }
+          function hex(n, width = 6) {
+            return (n < 0 ? "-0x" + (-n).toString(16).toUpperCase() : "0x" + n.toString(16).toUpperCase().padStart(width, "0"));
+          }
+          function dataEnd(map) {
+            let addr = DATA_START;
+            let last = null;
+            while (map.has(addr)) {
+              last = addr;
+              addr += 4;
+            }
+            return last;
+          }
+          function hooks(map) {
+            const end = dataEnd(map);
+            const out = new Map();
+            for (const [addr, value] of map) {
+              if (!(addr >= DATA_START && end !== null && addr <= end)) out.set(addr, value);
+            }
+            return out;
+          }
+          const official = parse("reproducibility/official-v2.4-934F9081.pnach");
+          const candidate = parse("mod/934F9081.pnach");
+          const officialHooks = hooks(official);
+          const candidateHooks = hooks(candidate);
+          const officialHookSet = [...officialHooks.keys()].sort((a, b) => a - b);
+          const candidateHookSet = [...candidateHooks.keys()].sort((a, b) => a - b);
+          const candidateEnd = dataEnd(candidate);
+          const unexpected = candidateHookSet.filter((addr) => !officialHooks.has(addr));
+          const missing = officialHookSet.filter((addr) => !candidateHooks.has(addr));
+          const changed = officialHookSet.filter((addr) => candidateHooks.has(addr) && officialHooks.get(addr) !== candidateHooks.get(addr));
+          const guardPass = candidateEnd !== null && candidateEnd <= DATA_GUARD;
+          const hookSetsSame = unexpected.length === 0 && missing.length === 0;
+          fs.writeFileSync("reproducibility/official-patch-addresses.txt", [...official.keys()].sort((a, b) => a - b).map((addr) => hex(addr)).join("\n") + "\n");
+          fs.writeFileSync("reproducibility/candidate-patch-addresses.txt", [...candidate.keys()].sort((a, b) => a - b).map((addr) => hex(addr)).join("\n") + "\n");
+          const report = [];
+          report.push(`data_start=${hex(DATA_START)}`);
+          report.push(`data_end=${hex(candidateEnd)}`);
+          report.push(`guard=${hex(DATA_GUARD)}`);
+          report.push(`guard_pass=${guardPass ? "yes" : "no"}`);
+          report.push(`margin_bytes=${DATA_GUARD - candidateEnd}`);
+          report.push(`margin_hex=${hex(DATA_GUARD - candidateEnd, 1)}`);
+          report.push(`reduction_from_failed_bytes=${FAILED_END - candidateEnd}`);
+          report.push(`reduction_from_failed_hex=${hex(FAILED_END - candidateEnd, 1)}`);
+          report.push(`delta_vs_category_sweep_bytes=${candidateEnd - CATEGORY_SWEEP_END}`);
+          report.push(`delta_vs_category_sweep_hex=${hex(candidateEnd - CATEGORY_SWEEP_END, 1)}`);
+          report.push(`preferred_target_pass=${candidateEnd <= CATEGORY_SWEEP_END ? "yes" : "no"}`);
+          report.push(`hook_sets_same=${hookSetsSame ? "yes" : "no"}`);
+          report.push(`candidate_hooks=${candidateHookSet.map((addr) => hex(addr)).join(",")}`);
+          report.push(`missing_hook_addresses=${missing.map((addr) => hex(addr)).join(",") || "none"}`);
+          report.push(`unexpected_patch_addresses=${unexpected.map((addr) => hex(addr)).join(",") || "none"}`);
+          report.push("changed_hook_target_values:");
+          if (changed.length === 0) {
+            report.push("none");
+          } else {
+            for (const addr of changed) report.push(`${hex(addr)} ${officialHooks.get(addr)} -> ${candidateHooks.get(addr)}`);
+          }
+          fs.writeFileSync("reproducibility/address-report.txt", report.join("\n") + "\n");
+          console.log(report.join("\n"));
+          if (!guardPass || !hookSetsSame || unexpected.length) process.exit(1);
+          NODE
+
+      - name: Record post-build source state
+        if: always()
+        run: |
+          git diff -- README.md .github/workflows/build.yml elf_processor.js mod/build.sh mod/make_mod.js mod/mod.cpp mod/loader/loader.c docs/reproducibility-v2.4.md scripts/compare-pnach-layout.js > reproducibility/tracked-source-diff-after-build.patch
+          git status --short > reproducibility/git-status-after-build.txt
+          git rev-parse HEAD > reproducibility/source-commit.txt
+
+      - name: Upload shrink pass 1 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerdana-stage1-hardcoded-downgrade-shrink-pass1
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.o
+            mod/mod.s
+            mod/mod.ii
+            mod/loader/patch.c
+            reproducibility/official-v2.4-934F9081.pnach
+            reproducibility/official-v2.4-df_hack.elf
+            reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass1.patch
+            reproducibility/applied-source-diff.patch
+            reproducibility/applied-source-diff-stat.txt
+            reproducibility/hash-report.txt
+            reproducibility/layout-report.txt
+            reproducibility/layout-vs-failed-stage1.txt
+            reproducibility/layout-vs-category-sweep.txt
+            reproducibility/address-report.txt
+            reproducibility/official-patch-addresses.txt
+            reproducibility/candidate-patch-addresses.txt
+            reproducibility/shrink-pass-report.txt
+            reproducibility/size-contributors-report.txt
+            reproducibility/previous-artifacts-report.txt
+            reproducibility/tracked-source-diff-after-build.patch
+            reproducibility/git-status-after-build.txt
+            reproducibility/source-commit.txt
