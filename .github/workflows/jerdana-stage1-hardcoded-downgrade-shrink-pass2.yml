@@ -109,8 +109,10 @@ jobs:
         run: |
           export PS2DEV=/usr/local/ps2dev
           export PATH=$PATH:$PS2DEV/ee/bin
-          NM=mips64r5900el-ps2-elf-nm
+          NM=ee-nm
           {
+            echo "nm_command=$(command -v $NM)"
+            echo
             echo "pass2_stage1_symbols:"
             $NM -S --size-sort mod/mod.o | grep -E 'stage1|outfit_test' || true
             echo
