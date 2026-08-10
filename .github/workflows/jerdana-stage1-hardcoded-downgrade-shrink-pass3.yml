@@ -1,0 +1,190 @@
+name: Jerdana Stage 1 Downgrade Shrink Pass 3
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - jerdana-stage1-hardcoded-133-to-130-shrink-pass3
+
+jobs:
+  shrink-pass3:
+    runs-on: ubuntu-latest
+    env:
+      OFFICIAL_PNACH_SHA256: 8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214
+      OFFICIAL_ELF_SHA256: 43eba6baafba8aa20bfa2b2c9d8c7e5fcb24eb30ce2d9c92f2bbd4eea8bacf30
+      PASS2_ARTIFACT_ID: "8251082470"
+      PASS2_PNACH_SHA256: c067a19c1cb3e670ea3bb63506dfdc87449be42d481f880928017f5f88c4b617
+      PASS2_ELF_SHA256: 042b0ce2ffa7d47f61ea4b3d461a29ae95150f083520613e6d70dd0dbe2152b7
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup official-style ps2dev environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nodejs unzip
+          wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
+          sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
+
+      - name: Preserve pass 2 source and apply shrink pass 3 patch
+        run: |
+          mkdir -p /tmp/pass2-source
+          cp -a . /tmp/pass2-source/repo
+          (
+            cd /tmp/pass2-source/repo
+            git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass2.patch
+            git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass2.patch
+          )
+          git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+          git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+          git diff -- mod/mod.cpp > reproducibility/applied-source-diff.patch
+          git diff --stat -- mod/mod.cpp > reproducibility/applied-source-diff-stat.txt
+          diff -u /tmp/pass2-source/repo/mod/mod.cpp mod/mod.cpp > reproducibility/source-diff-vs-pass2.patch || test $? -eq 1
+          test "$(grep -c '^[-+]\s*DisplayDialogText' reproducibility/source-diff-vs-pass2.patch)" -eq 2
+          test "$(grep -c '^[-+]\s*case 3:' reproducibility/source-diff-vs-pass2.patch || true)" -eq 0
+
+      - name: Record shrink pass 3 plan
+        run: |
+          {
+            echo "probe=Jerdana Stage 1 hardcoded 133->130 downgrade shrink pass 3"
+            echo "stage=Stage 1 only"
+            echo "installed=no"
+            echo "runtime_tested=no"
+            echo "category=1"
+            echo "write_target=slot+0x00 only"
+            echo "authorized_change=shorten isolated CancelLedgeFly case-3 advice text only"
+            echo "unrelated_features_removed=no"
+            echo "CancelLedgeFly_behavior_changed=no"
+            echo "state=OutfitTestState(saved_slot,original_config,target_config,state)"
+            echo "status=0 READY;1 ACTIVE;2 DONE;3 REFUSED;4 WRITEFAIL_SAFE;5 ACTIVE_BADID;6 UNSAFE"
+            echo "controls=X apply; Square restore; Triangle back only when not unresolved; Circle unused; L2 unused"
+            echo "one_cycle_per_session=yes"
+            echo "display=J%d id:%d"
+            echo "pass2_end=0x30802C"
+            echo "required_guard=0x30809C"
+            echo "preferred_target=0x307FC4"
+            echo "original_advice_payload_with_nul=501"
+            echo "original_advice_aligned_footprint=504"
+            echo "replacement_advice_payload_with_nul=57"
+            echo "replacement_advice_aligned_footprint=64"
+            echo "predicted_recovery=440"
+          } | tee reproducibility/shrink-pass3-report.txt
+
+      - name: Build with original script
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PS2SDK=$PS2DEV/ps2sdk
+          export GSKIT=$PS2DEV/gsKit
+          export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin
+          cd mod
+          ./build.sh
+
+      - name: Fetch and verify official baseline and pass 2 parent artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          wget -O reproducibility/official-v2.4-df_hack.elf https://github.com/monster860/ntdf-mod/releases/download/v2.4/df_hack.elf
+          mkdir -p reproducibility/previous/pass2
+          curl -fL -H "Authorization: Bearer ${GITHUB_TOKEN}" -o reproducibility/previous/pass2.zip "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${PASS2_ARTIFACT_ID}/zip"
+          unzip -q reproducibility/previous/pass2.zip -d reproducibility/previous/pass2
+          test "$(sha256sum reproducibility/previous/pass2/mod/934F9081.pnach | awk '{print $1}')" = "$PASS2_PNACH_SHA256"
+          test "$(sha256sum reproducibility/previous/pass2/mod/df_hack.elf | awk '{print $1}')" = "$PASS2_ELF_SHA256"
+          echo "pass2_artifact_downloaded_and_verified=yes" > reproducibility/previous-artifacts-report.txt
+
+      - name: Compare hashes, layouts, hooks, and guard
+        run: |
+          GENERATED_PNACH="$(sha256sum mod/934F9081.pnach | awk '{print $1}')"
+          GENERATED_ELF="$(sha256sum mod/df_hack.elf | awk '{print $1}')"
+          OFFICIAL_PNACH="$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')"
+          OFFICIAL_ELF="$(sha256sum reproducibility/official-v2.4-df_hack.elf | awk '{print $1}')"
+          {
+            echo "expected_official_pnach=${OFFICIAL_PNACH_SHA256}"
+            echo "official_pnach=${OFFICIAL_PNACH}"
+            echo "generated_pnach=${GENERATED_PNACH}"
+            echo "expected_official_elf=${OFFICIAL_ELF_SHA256}"
+            echo "official_elf=${OFFICIAL_ELF}"
+            echo "generated_elf=${GENERATED_ELF}"
+            wc -l reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach
+            echo "expected_pass2_pnach=${PASS2_PNACH_SHA256}"
+            echo "verified_pass2_pnach=$(sha256sum reproducibility/previous/pass2/mod/934F9081.pnach | awk '{print $1}')"
+            echo "expected_pass2_elf=${PASS2_ELF_SHA256}"
+            echo "verified_pass2_elf=$(sha256sum reproducibility/previous/pass2/mod/df_hack.elf | awk '{print $1}')"
+            sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch reproducibility/verify-shrink-pass3.js
+          } | tee reproducibility/hash-report.txt
+          test "$OFFICIAL_PNACH" = "$OFFICIAL_PNACH_SHA256"
+          test "$OFFICIAL_ELF" = "$OFFICIAL_ELF_SHA256"
+          node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-report.txt
+          node scripts/compare-pnach-layout.js reproducibility/previous/pass2/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-pass2.txt
+          node reproducibility/verify-shrink-pass3.js
+
+      - name: Measure generated assembly and code size
+        if: always()
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PATH=$PATH:$PS2DEV/ee/bin
+          NM=ee-nm
+          {
+            echo "nm_command=$(command -v $NM)"
+            echo
+            echo "pass3_stage1_symbols:"
+            $NM -S --size-sort mod/mod.o | grep -E 'stage1|outfit_test' || true
+            echo
+            echo "pass3_resume_hook:"
+            $NM -S mod/mod.o | grep 'ResumeGameHook' || true
+            echo
+            echo "pass2_stage1_symbols:"
+            $NM -S --size-sort reproducibility/previous/pass2/mod/mod.o | grep -E 'stage1|outfit_test' || true
+            echo
+            echo "pass2_resume_hook:"
+            $NM -S reproducibility/previous/pass2/mod/mod.o | grep 'ResumeGameHook' || true
+            echo
+            echo "pass3_stage1_assembly_markers:"
+            grep -n '_Z13stage1_actionb\|outfit_test\|J%d id:%d' mod/mod.s || true
+            echo
+            echo "pass2_stage1_assembly_markers:"
+            grep -n '_Z13stage1_actionb\|outfit_test\|J%d id:%d' reproducibility/previous/pass2/mod/mod.s || true
+            echo
+            echo "CancelLedgeFly_symbols:"
+            $NM -S mod/mod.o | grep 'CancelLedgeFly' || true
+            $NM -S reproducibility/previous/pass2/mod/mod.o | grep 'CancelLedgeFly' || true
+          } | tee reproducibility/assembly-size-report.txt
+
+      - name: Record post-build source state
+        if: always()
+        run: |
+          git diff -- README.md .github/workflows/build.yml .github/workflows/jerdana-stage1-hardcoded-downgrade-shrink-pass3.yml elf_processor.js mod/build.sh mod/make_mod.js mod/mod.cpp mod/loader/loader.c docs/reproducibility-v2.4.md scripts/compare-pnach-layout.js reproducibility/verify-shrink-pass3.js > reproducibility/tracked-source-diff-after-build.patch
+          git status --short > reproducibility/git-status-after-build.txt
+          git rev-parse HEAD > reproducibility/source-commit.txt
+
+      - name: Upload shrink pass 3 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerdana-stage1-hardcoded-downgrade-shrink-pass3
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.o
+            mod/mod.s
+            mod/mod.ii
+            mod/loader/patch.c
+            reproducibility/official-v2.4-934F9081.pnach
+            reproducibility/official-v2.4-df_hack.elf
+            reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+            reproducibility/verify-shrink-pass3.js
+            reproducibility/applied-source-diff.patch
+            reproducibility/applied-source-diff-stat.txt
+            reproducibility/hash-report.txt
+            reproducibility/layout-report.txt
+            reproducibility/layout-vs-pass2.txt
+            reproducibility/address-report.txt
+            reproducibility/official-patch-addresses.txt
+            reproducibility/pass2-patch-addresses.txt
+            reproducibility/candidate-patch-addresses.txt
+            reproducibility/shrink-pass3-report.txt
+            reproducibility/source-diff-vs-pass2.patch
+            reproducibility/assembly-size-report.txt
+            reproducibility/previous-artifacts-report.txt
+            reproducibility/tracked-source-diff-after-build.patch
+            reproducibility/git-status-after-build.txt
+            reproducibility/source-commit.txt
