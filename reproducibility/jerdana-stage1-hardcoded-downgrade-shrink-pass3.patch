@@ -133,12 +133,10 @@ index 95c3804..9b7702e 100644
  			for(int i = 0; i < 20000000; i++) QueryGameState(0);
  			DisplayDialogText("\x01\x03\x09\x02\x03\xa0\x40\x40\x80Wait!\x01\x03\x09\x02\x03\x80\x80\x80\x80 Don't reset your console just yet!.\x01\x02\x04\x04\x02Your game didn't \x01\x03\x09\x02\x03\xa0\x40\x40\x80""actually\x01\x03\x09\x02\x03\x80\x80\x80\x80 crash.\x01\x02\x04\x04\x02I was able to save your game just from the brink of crashing once again!\x01\x02\x04\x04\x02Seriously though, if this was an actual run you'd probably be yelling some profanities right about now.\x01\x02\x04\x04\x02Luckily, this is not an actual run.\x01\x02\x04\x04\x02Right...........?\x01\x02\x04\x04\x02Love,\n    monster860");
  			break;
--		case 3:
+ 		case 3:
 -			DisplayDialogText("Okay, since you keep coming back here, I guess I'll give you some free advice.\x01\x02\x04\x04\x02Whenever you ledge fly, you want to wait until the screen goes \x01\x03\x09\x02\x03\xa0\x40\x40\x80""all the way white\x01\x03\x09\x02\x03\x80\x80\x80\x80, and then \x01\x03\x09\x02\x03\x40\x60\xa0\x80hold ^\x01\x03\x09\x02\x03\x80\x80\x80\x80.\x01\x02\x04\x04\x02This will maximize the chances of your ledge fly being succesful!\x01\x02\x04\x04\x02Of course this won't prevent your game from crashing - that requires good aim.\x01\x02\x04\x04\x02""Anyways, if you already know this, I apologize, I am simply a piece of code, I can't read your mind.\x01\x02\x04\x04\x02Love,\n    monster860");
--			break;
-+		case 3:
 +			DisplayDialogText("Ledge fly stopped.\x01\x02\x04\x04\x02Wait for full white, then hold ^.");
-+			break;
+ 			break;
  		default:
  			DisplayDialogText("SCREEEEEEEEEEEEEEEEEEEEEE\x01\x02\x04\x04\x02You ledge flew into the wrong place again, and I stopped your game from crashing again.\x01\x02\x04\x04\x02Love,\n    monster860");
  			break;
@@ -183,4 +181,3 @@ index 95c3804..9b7702e 100644
  
  	} else {
  		state = MENU_OFF;
-
