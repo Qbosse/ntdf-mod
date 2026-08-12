@@ -1,0 +1,36 @@
+diff --git a/mod/mod.cpp b/mod/mod.cpp
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -164,6 +164,7 @@ struct OutfitTestState {
+ 	int state;
+ };
+ OutfitTestState outfit_test = {0, 0, 0, 0};
++int last_instant = 0;
+ 
+ enum MenuState {
+ 	MENU_OFF, MENU_MAIN, MENU_LOAD_AREA, MENU_GIVE_ITEM_ID, MENU_GIVE_ITEM_AMT, MENU_EDIT_NP, MENU_EDIT_FLAGS, MENU_OPTIONS
+@@ -713,21 +714,14 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 		}
+ 	} else if(state == MENU_OPTIONS) {
++		if(cbi) last_instant = cbi;
+ 		if((cbi & 0x10) && !OUTFIT_UNRESOLVED()) {
+ 			playmenusound(0x6);
+ 			state = MENU_MAIN;
+ 			hacks_menu_idx = 0;
+ 			return (void*)0;
+-		} else if(cbi & 0x80) {
+-			stage1_action(true);
+-		} else if(cbi & 0x40) {
+-			stage1_action(false);
+ 		}
+ 
+-		int slot = OUTFIT_SLOT();
+-		int config = slot ? *((int*)slot) : 0;
+-		if((outfit_test.state == 1 || outfit_test.state == 5) &&
+-		   (slot != outfit_test.saved_slot || config != outfit_test.target_config)) outfit_test.state = 6;
+ 		char line[32];
+-		sprintf(line, "J%d id:%d", outfit_test.state, config ? *((short*)(config + 0x0c)) : -1);
++		sprintf(line, "I:%x L:%x", cbi, last_instant);
+ 		append_str(char_buf, line, char_buf_len);
+ 
+ 	} else {
