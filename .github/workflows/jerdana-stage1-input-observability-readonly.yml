@@ -110,6 +110,9 @@ jobs:
             echo "assembly_markers:"
             grep -n -E '_Z13stage1_actionb|outfit_test|last_instant|I:%x L:%x' mod/mod.s || true
             echo
+            echo "stage1_call_sites:"
+            grep -n -E 'jal[[:space:]]+_Z13stage1_actionb' mod/mod.s || true
+            echo
             echo "options_source:"
             sed -n '/} else if(state == MENU_OPTIONS) {/,/^[[:space:]]*} else {/p' mod/mod.cpp
           } | tee reproducibility/generated-reachability-report.txt
