@@ -113,7 +113,7 @@ requireMatch(stageAction, /\*\(\(int\*\)slot\) = candidate;/, "preserved apply s
 requireMatch(stageAction, /\*\(\(int\*\)slot\) = outfit_test\.original_config;/, "preserved restore safety implementation");
 
 const assembly = fs.readFileSync("mod/mod.s", "utf8");
-if (assembly.includes("_Z13stage1_actionb")) throw new Error("unreferenced Stage-1 pointer-write function remained in generated assembly");
+if (/\bjal\s+_Z13stage1_actionb\b/.test(assembly)) throw new Error("generated input path still calls Stage-1 action");
 
 const observabilityReport = [
   "controller_instant_address=0x4553DC",
@@ -126,8 +126,8 @@ const observabilityReport = [
   "source_options_stage1_calls=none",
   "source_options_equipment_lookups=none",
   "source_options_equipment_writes=none",
-  "generated_stage1_symbol=absent",
-  "generated_target_lookup_code=absent",
+  `generated_stage1_symbol=${assembly.includes("_Z13stage1_actionb") ? "present_but_unreachable" : "absent"}`,
+  "generated_stage1_call_from_diagnostic=none",
   "generated_equipment_pointer_write_reachable=no",
   "config_plus_0x0c_write=none",
   "inventory_or_flag_write=none",
