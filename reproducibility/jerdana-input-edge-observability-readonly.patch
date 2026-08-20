@@ -1,0 +1,59 @@
+diff --git a/mod/mod.cpp b/mod/mod.cpp
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -164,7 +164,16 @@
+ 	int state;
+ };
+ OutfitTestState outfit_test = {0, 0, 0, 0};
++enum InputCaptureState {
++	INPUT_WAIT_ZERO,
++	INPUT_ARMED,
++	INPUT_CAPTURING,
++	INPUT_FROZEN
++};
++int edge_instant = 0;
+ int last_instant = 0;
++int sample_frames = 0;
++InputCaptureState input_capture_state = INPUT_WAIT_ZERO;
+ 
+ enum MenuState {
+ 	MENU_OFF, MENU_MAIN, MENU_LOAD_AREA, MENU_GIVE_ITEM_ID, MENU_GIVE_ITEM_AMT, MENU_EDIT_NP, MENU_EDIT_FLAGS, MENU_OPTIONS
+@@ -713,8 +722,28 @@
+ 			append_str(char_buf, "\n\n  false", char_buf_len);
+ 		}
+ 	} else if(state == MENU_OPTIONS) {
+-		if(cbi) last_instant = cbi;
++		if(input_capture_state == INPUT_WAIT_ZERO) {
++			if(!cbi) input_capture_state = INPUT_ARMED;
++		} else if(input_capture_state == INPUT_ARMED) {
++			if(cbi) {
++				edge_instant = cbi;
++				last_instant = cbi;
++				sample_frames = 1;
++				input_capture_state = INPUT_CAPTURING;
++			}
++		} else if(input_capture_state == INPUT_CAPTURING) {
++			if(cbi) {
++				last_instant = cbi;
++				sample_frames++;
++			} else {
++				input_capture_state = INPUT_ARMED;
++			}
++		} else if(!cbi) {
++			input_capture_state = INPUT_ARMED;
++		}
++
+ 		if((cbi & 0x10) && !OUTFIT_UNRESOLVED()) {
++			input_capture_state = INPUT_FROZEN;
+ 			playmenusound(0x6);
+ 			state = MENU_MAIN;
+ 			hacks_menu_idx = 0;
+@@ -722,7 +751,7 @@
+ 		}
+ 
+ 		char line[32];
+-		sprintf(line, "I:%x L:%x", cbi, last_instant);
++		sprintf(line, "E:%x N:%x F:%d", edge_instant, last_instant, sample_frames);
+ 		append_str(char_buf, line, char_buf_len);
+ 
+ 	} else {
