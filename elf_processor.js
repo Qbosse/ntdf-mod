@@ -114,7 +114,13 @@ exports.create_mod = async function create_mod(input_elf, out_offset, symbol_add
 					mod_buffer.writeUInt32LE(abs_addr + orig_val, mod_buffer_offset);
 					break;
 				case 4: // R_MIPS_26
-					mod_buffer.writeInt32LE((orig_val & 0xFC000000) | (0x3FFFFF & (abs_addr >> 2)), mod_buffer_offset);
+					const addend = (orig_val & 0x03FFFFFF) << 2;
+					const target = (abs_addr + addend) >>> 0;
+					mod_buffer.writeInt32LE(
+						(((orig_val & 0xFC000000) |
+						  ((target >>> 2) & 0x03FFFFFF)) | 0),
+						mod_buffer_offset
+					);
 					break;
 				case 5: // R_MIPS_HI16
 					let next_r_offset = buf.readUInt32LE(off+8);
