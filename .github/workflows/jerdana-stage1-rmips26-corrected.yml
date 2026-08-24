@@ -1,0 +1,189 @@
+name: Jerdana Stage 1 R_MIPS_26 Corrected
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - jerdana-stage1-rmips26-corrected
+
+env:
+  OFFICIAL_PNACH_SHA256: 8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214
+  OFFICIAL_ELF_SHA256: 43eba6baafba8aa20bfa2b2c9d8c7e5fcb24eb30ce2d9c92f2bbd4eea8bacf30
+  PASS3_ARTIFACT_ID: "9072630862"
+  PASS3_PNACH_SHA256: 2df67d2d394a30b9af794dc35f5b236f59f5c6498efc9c1ca7505621859f8d2f
+  PASS3_ELF_SHA256: 87f706dedc750aad624f7bad017aacc88c40eb4389ee947f622584e22889426a
+  PASS3_PATCH_C_SHA256: ed6c9cb3a53a3a3b2b3e1f97a865e6b642da776a22fd23f903cd87442dd2cf9a
+
+jobs:
+  official-v2-4-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup official v2.4 PS2DEV environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nodejs
+          wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
+          sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
+
+      - name: Build unmodified official source
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PS2SDK=$PS2DEV/ps2sdk
+          export GSKIT=$PS2DEV/gsKit
+          export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin
+          cd mod
+          ./build.sh
+
+      - name: Fetch and verify official release artifacts
+        run: |
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          wget -O reproducibility/official-v2.4-df_hack.elf https://github.com/monster860/ntdf-mod/releases/download/v2.4/df_hack.elf
+          test "$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')" = "$OFFICIAL_PNACH_SHA256"
+          test "$(sha256sum reproducibility/official-v2.4-df_hack.elf | awk '{print $1}')" = "$OFFICIAL_ELF_SHA256"
+
+      - name: Require byte-identical official regression
+        run: |
+          test "$(sha256sum mod/934F9081.pnach | awk '{print $1}')" = "$OFFICIAL_PNACH_SHA256"
+          test "$(sha256sum mod/df_hack.elf | awk '{print $1}')" = "$OFFICIAL_ELF_SHA256"
+          node reproducibility/verify-r-mips26.js mod/mod.o 0x3043B0 mod/934F9081.pnach reproducibility/official-r-mips26-report.txt memset=0x2BFE8C
+          node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/official-layout-report.txt
+          {
+            echo "official_regression=pass"
+            sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c mod/mod.ii mod/mod.s mod/mod.o elf_processor.js reproducibility/verify-r-mips26.js
+            wc -l mod/934F9081.pnach
+          } | tee reproducibility/official-regression-report.txt
+
+      - name: Preserve official regression source state
+        if: always()
+        run: |
+          git diff -- elf_processor.js mod/mod.cpp mod/make_mod.js mod/build.sh > reproducibility/official-source-diff.patch
+          git status --short > reproducibility/official-git-status.txt
+          git rev-parse HEAD > reproducibility/source-commit.txt
+
+      - name: Upload official regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-v2.4-rmips26-regression
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.ii
+            mod/mod.s
+            mod/mod.o
+            mod/loader/patch.c
+            reproducibility/official-v2.4-934F9081.pnach
+            reproducibility/official-v2.4-df_hack.elf
+            reproducibility/official-r-mips26-report.txt
+            reproducibility/official-layout-report.txt
+            reproducibility/official-regression-report.txt
+            reproducibility/official-source-diff.patch
+            reproducibility/official-git-status.txt
+            reproducibility/source-commit.txt
+            reproducibility/verify-r-mips26.js
+            elf_processor.js
+
+  corrected-stage1:
+    needs: official-v2-4-regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup official v2.4 PS2DEV environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nodejs unzip
+          wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
+          sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
+
+      - name: Apply the exact accepted Stage-1 source patches
+        run: |
+          git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass2.patch
+          git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass2.patch
+          git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+          git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+          git diff -- mod/mod.cpp > reproducibility/applied-stage1-source.patch
+          git diff --stat -- mod/mod.cpp > reproducibility/applied-stage1-source-stat.txt
+
+      - name: Build corrected Stage 1
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PS2SDK=$PS2DEV/ps2sdk
+          export GSKIT=$PS2DEV/gsKit
+          export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin
+          cd mod
+          ./build.sh
+
+      - name: Fetch verified Pass-3 parent and official baseline
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p reproducibility/previous/pass3
+          curl -fL -H "Authorization: Bearer ${GITHUB_TOKEN}" -o reproducibility/previous/pass3.zip "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${PASS3_ARTIFACT_ID}/zip"
+          unzip -q reproducibility/previous/pass3.zip -d reproducibility/previous/pass3
+          test "$(sha256sum reproducibility/previous/pass3/mod/934F9081.pnach | awk '{print $1}')" = "$PASS3_PNACH_SHA256"
+          test "$(sha256sum reproducibility/previous/pass3/mod/df_hack.elf | awk '{print $1}')" = "$PASS3_ELF_SHA256"
+          test "$(sha256sum reproducibility/previous/pass3/mod/loader/patch.c | awk '{print $1}')" = "$PASS3_PATCH_C_SHA256"
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          test "$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')" = "$OFFICIAL_PNACH_SHA256"
+
+      - name: Verify every R_MIPS_26 and the corrected Stage-1 artifact
+        run: |
+          node reproducibility/verify-r-mips26.js mod/mod.o 0x3043B0 mod/934F9081.pnach reproducibility/stage1-r-mips26-report.txt memset=0x2BFE8C
+          node reproducibility/verify-stage1-rmips26-corrected.js
+          node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-official.txt
+          node scripts/compare-pnach-layout.js reproducibility/previous/pass3/mod/934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-pass3.txt
+
+      - name: Record corrected artifact identities
+        run: |
+          {
+            echo "build_environment=GitHub Actions official v2.4 PS2DEV v1.1"
+            echo "stage1_source_changed_from_pass3=no"
+            echo "authorized_tool_change=R_MIPS_26 section-symbol addend preservation"
+            echo "installed=no"
+            echo "runtime_tested=no"
+            sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c mod/mod.ii mod/mod.s mod/mod.o elf_processor.js reproducibility/verify-r-mips26.js reproducibility/verify-stage1-rmips26-corrected.js
+            wc -l mod/934F9081.pnach
+          } | tee reproducibility/corrected-hash-report.txt
+
+      - name: Preserve generated disassembly and source state
+        if: always()
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PATH=$PATH:$PS2DEV/ee/bin
+          ee-objdump -dr mod/mod.o > reproducibility/mod-objdump-dr.txt
+          ee-readelf -rWs mod/mod.o > reproducibility/mod-readelf-rws.txt
+          git diff -- elf_processor.js mod/mod.cpp mod/make_mod.js mod/build.sh > reproducibility/corrected-source-diff.patch
+          git status --short > reproducibility/corrected-git-status.txt
+          git rev-parse HEAD > reproducibility/source-commit.txt
+
+      - name: Upload corrected Stage-1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerdana-stage1-rmips26-corrected
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.cpp
+            mod/mod.ii
+            mod/mod.s
+            mod/mod.o
+            mod/loader/patch.c
+            reproducibility/applied-stage1-source.patch
+            reproducibility/applied-stage1-source-stat.txt
+            reproducibility/stage1-r-mips26-report.txt
+            reproducibility/stage1-corrected-report.txt
+            reproducibility/layout-vs-official.txt
+            reproducibility/layout-vs-pass3.txt
+            reproducibility/corrected-hash-report.txt
+            reproducibility/mod-objdump-dr.txt
+            reproducibility/mod-readelf-rws.txt
+            reproducibility/corrected-source-diff.patch
+            reproducibility/corrected-git-status.txt
+            reproducibility/source-commit.txt
+            reproducibility/verify-r-mips26.js
+            reproducibility/verify-stage1-rmips26-corrected.js
+            elf_processor.js
