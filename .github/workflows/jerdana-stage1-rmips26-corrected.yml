@@ -98,10 +98,8 @@ jobs:
           wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
           sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
 
-      - name: Apply the exact accepted Stage-1 source patches
+      - name: Apply the exact accepted Stage-1 source patch
         run: |
-          git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass2.patch
-          git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass2.patch
           git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
           git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
           git diff -- mod/mod.cpp > reproducibility/applied-stage1-source.patch
@@ -153,8 +151,13 @@ jobs:
         run: |
           export PS2DEV=/usr/local/ps2dev
           export PATH=$PATH:$PS2DEV/ee/bin
-          ee-objdump -dr mod/mod.o > reproducibility/mod-objdump-dr.txt
-          ee-readelf -rWs mod/mod.o > reproducibility/mod-readelf-rws.txt
+          if [[ -f mod/mod.o ]]; then
+            ee-objdump -dr mod/mod.o > reproducibility/mod-objdump-dr.txt
+            ee-readelf -rWs mod/mod.o > reproducibility/mod-readelf-rws.txt
+          else
+            echo "mod.o unavailable" > reproducibility/mod-objdump-dr.txt
+            echo "mod.o unavailable" > reproducibility/mod-readelf-rws.txt
+          fi
           git diff -- elf_processor.js mod/mod.cpp mod/make_mod.js mod/build.sh > reproducibility/corrected-source-diff.patch
           git status --short > reproducibility/corrected-git-status.txt
           git rev-parse HEAD > reproducibility/source-commit.txt
