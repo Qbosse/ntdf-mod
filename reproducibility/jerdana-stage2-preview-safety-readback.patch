@@ -1,0 +1,56 @@
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -250,7 +250,8 @@
+ 
+ static void stage1_action(bool restore) {
+ 	if(!restore) {
+-		if(outfit_test.state || outfit_test.saved_slot || outfit_test.original_config || outfit_test.target_config) {
++		if(outfit_test.state != 0) return;
++		if(outfit_test.saved_slot || outfit_test.original_config || outfit_test.target_config) {
+ 			outfit_test.state = 3;
+ 			return;
+ 		}
+@@ -259,15 +260,16 @@
+ 		return;
+ 	}
+ 	int slot = OUTFIT_SLOT();
+-	int config = slot ? *((int*)slot) : 0;
++	volatile int *slot_word = (volatile int*)slot;
++	int config = slot ? *slot_word : 0;
+ 	if(restore) {
+ 		if(!slot || slot != outfit_test.saved_slot || !outfit_test.original_config ||
+ 		   !outfit_test.target_config || config != outfit_test.target_config) {
+ 			outfit_test.state = 6;
+ 			return;
+ 		}
+-		*((int*)slot) = outfit_test.original_config;
+-		config = *((int*)slot);
++		*slot_word = outfit_test.original_config;
++		config = *slot_word;
+ 		if(config == outfit_test.original_config && *((short*)(config + 0x0c)) == 133) {
+ 			outfit_test.saved_slot = outfit_test.original_config = outfit_test.target_config = 0;
+ 			outfit_test.state = 2;
+@@ -287,8 +289,8 @@
+ 	outfit_test.original_config = config;
+ 	outfit_test.target_config = candidate;
+ 	outfit_test.state = 1;
+-	*((int*)slot) = candidate;
+-	int active_config = *((int*)slot);
++	*slot_word = candidate;
++	int active_config = *slot_word;
+ 	if(active_config == candidate) {
+ 		outfit_test.state = *((short*)(active_config + 0x0c)) == 130 ? 1 : 5;
+ 	} else if(active_config == config) {
+@@ -720,7 +722,11 @@
+ 		} else if(cbi & 0x80) {
+ 			stage1_action(true);
+ 		} else if(cbi & 0x40) {
+-			stage1_action(false);
++			if(outfit_test.state == 0) {
++				stage1_action(false);
++			} else if(outfit_test.state == 1) {
++				return HandleResumeGameTrampoline(a0, a1, a2, a3, t0);
++			}
+ 		}
+ 
+ 		int slot = OUTFIT_SLOT();
