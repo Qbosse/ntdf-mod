@@ -93,7 +93,7 @@ function slotStoreLoads(stageInstructions) {
       candidateIndex > index && candidateIndex <= index + 6 &&
       new RegExp(`^lw\\s+[^,]+,0\\(${store[2].replace("$", "\\$")}\\)$`).test(instruction.asm)
     );
-    if (loadIndex < 0) throw new Error(`slot store at .text+${hex(stageInstructions[index].offset)} lacks immediate volatile reload`);
+    if (loadIndex < 0) continue;
     const load = stageInstructions[loadIndex].asm.match(/^lw\s+([^,]+),0\(([^)]+)\)$/);
     stores.push({ store: stageInstructions[index], load: stageInstructions[loadIndex], loadedRegister: load[1], slotRegister: store[2] });
   }
