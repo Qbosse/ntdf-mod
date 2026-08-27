@@ -1,0 +1,116 @@
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -162,8 +162,10 @@
+ 	int original_config;
+ 	int target_config;
+ 	int state;
++	short original_id;
++	short selected_target;
+ };
+-OutfitTestState outfit_test = {0, 0, 0, 0};
++OutfitTestState outfit_test = {0, 0, 0, 0, 0, 130};
+ 
+ enum MenuState {
+ 	MENU_OFF, MENU_MAIN, MENU_LOAD_AREA, MENU_GIVE_ITEM_ID, MENU_GIVE_ITEM_AMT, MENU_EDIT_NP, MENU_EDIT_FLAGS, MENU_OPTIONS
+@@ -250,7 +252,7 @@
+ 
+ static void stage1_action(bool restore) {
+ 	if(!restore) {
+-		if(outfit_test.state != 0) return;
++		if(outfit_test.state != 0 && outfit_test.state != 3) return;
+ 		if(outfit_test.saved_slot || outfit_test.original_config || outfit_test.target_config) {
+ 			outfit_test.state = 3;
+ 			return;
+@@ -261,40 +263,52 @@
+ 	}
+ 	int slot = OUTFIT_SLOT();
+ 	volatile int *slot_word = (volatile int*)slot;
+-	int config = slot ? *slot_word : 0;
++	int config = (unsigned)slot >= 0x1000 ? *slot_word : 0;
+ 	if(restore) {
+-		if(!slot || slot != outfit_test.saved_slot || !outfit_test.original_config ||
++		if((unsigned)slot < 0x1000 || slot != outfit_test.saved_slot || !outfit_test.original_config ||
+ 		   !outfit_test.target_config || config != outfit_test.target_config) {
+ 			outfit_test.state = 6;
+ 			return;
+ 		}
+ 		*slot_word = outfit_test.original_config;
+ 		config = *slot_word;
+-		if(config == outfit_test.original_config && *((short*)(config + 0x0c)) == 133) {
++		if(config == outfit_test.original_config &&
++		   *((short*)(config + 0x0c)) == outfit_test.original_id) {
+ 			outfit_test.saved_slot = outfit_test.original_config = outfit_test.target_config = 0;
+-			outfit_test.state = 2;
++			outfit_test.original_id = 0;
++			outfit_test.state = 0;
+ 		} else {
+ 			outfit_test.state = 6;
+ 		}
+ 		return;
+ 	}
++	short original_id = config ? *((short*)(config + 0x0c)) : 0;
++	short selected_target = outfit_test.selected_target;
++	if((unsigned)slot < 0x1000 || !config || (unsigned)(original_id - 127) > 6 ||
++	   *((short*)(config + 0x0e)) != 1 || (unsigned)(selected_target - 127) > 6) {
++		outfit_test.state = 3;
++		return;
++	}
++	if(selected_target == original_id) return;
+ 	int manager = GetItemManager();
+-	int candidate = manager ? GetItemConfig(manager, 130) : 0;
+-	if(!slot || !config || *((short*)(config + 0x0c)) != 133 ||
+-	   !candidate || *((short*)(candidate + 0x0c)) != 130) {
++	int candidate = manager ? GetItemConfig(manager, selected_target) : 0;
++	if(!candidate || *((short*)(candidate + 0x0c)) != outfit_test.selected_target ||
++	   *((short*)(candidate + 0x0e)) != 1 || candidate == config) {
+ 		outfit_test.state = 3;
+ 		return;
+ 	}
+ 	outfit_test.saved_slot = slot;
+ 	outfit_test.original_config = config;
+ 	outfit_test.target_config = candidate;
++	outfit_test.original_id = *((short*)(config + 0x0c));
+ 	outfit_test.state = 1;
+ 	*slot_word = candidate;
+ 	int active_config = *slot_word;
+ 	if(active_config == candidate) {
+-		outfit_test.state = *((short*)(active_config + 0x0c)) == 130 ? 1 : 5;
++		outfit_test.state = *((short*)(active_config + 0x0c)) == outfit_test.selected_target ? 1 : 5;
+ 	} else if(active_config == config) {
+ 		outfit_test.saved_slot = outfit_test.original_config = outfit_test.target_config = 0;
++		outfit_test.original_id = 0;
+ 		outfit_test.state = 4;
+ 	} else {
+ 		outfit_test.state = 6;
+@@ -721,8 +735,13 @@
+ 			return (void*)0;
+ 		} else if(cbi & 0x80) {
+ 			stage1_action(true);
++		} else if((cbi & 0x2000) && (outfit_test.state == 0 || outfit_test.state == 3)) {
++			short selected_target = outfit_test.selected_target + 1;
++			if((unsigned)(selected_target - 127) > 6) selected_target = 127;
++			outfit_test.selected_target = selected_target;
++			if(outfit_test.state == 3) outfit_test.state = 0;
+ 		} else if(cbi & 0x40) {
+-			if(outfit_test.state == 0) {
++			if(outfit_test.state == 0 || outfit_test.state == 3) {
+ 				stage1_action(false);
+ 			} else if(outfit_test.state == 1) {
+ 				return HandleResumeGameTrampoline(a0, a1, a2, a3, t0);
+@@ -730,11 +749,13 @@
+ 		}
+ 
+ 		int slot = OUTFIT_SLOT();
+-		int config = slot ? *((int*)slot) : 0;
++		int config = (unsigned)slot >= 0x1000 ? *((int*)slot) : 0;
++		short live_id = config ? *((short*)(config + 0x0c)) : -1;
+ 		if((outfit_test.state == 1 || outfit_test.state == 5) &&
+-		   (slot != outfit_test.saved_slot || config != outfit_test.target_config)) outfit_test.state = 6;
++		   ((unsigned)slot < 0x1000 || slot != outfit_test.saved_slot ||
++		    config != outfit_test.target_config || live_id != outfit_test.selected_target)) outfit_test.state = 6;
+ 		char line[32];
+-		sprintf(line, "J%d id:%d", outfit_test.state, config ? *((short*)(config + 0x0c)) : -1);
++		sprintf(line, "J%d %d>%d", outfit_test.state, live_id, outfit_test.selected_target);
+ 		append_str(char_buf, line, char_buf_len);
+ 
+ 	} else {
