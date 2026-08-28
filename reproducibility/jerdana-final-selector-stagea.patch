@@ -1,0 +1,309 @@
+diff --git a/mod/mod.cpp b/mod/mod.cpp
+index 56c32a7..8d1813f 100644
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -157,15 +157,16 @@ int current_ledge_fly = 0;
+ int ledge_fly_consequence = 0;
+ int load_delay = 0;
+ 
+-struct OutfitTestState {
++struct OutfitSelState {
+ 	int saved_slot;
+ 	int original_config;
+-	int target_config;
++	int live_config;
+ 	int state;
+ 	short original_id;
+ 	short selected_target;
++	short live_id;
+ };
+-OutfitTestState outfit_test = {0, 0, 0, 0, 0, 130};
++OutfitSelState outfit_sel = {0, 0, 0, 0, 0, 127, 0};
+ 
+ enum MenuState {
+ 	MENU_OFF, MENU_MAIN, MENU_LOAD_AREA, MENU_GIVE_ITEM_ID, MENU_GIVE_ITEM_AMT, MENU_EDIT_NP, MENU_EDIT_FLAGS, MENU_OPTIONS
+@@ -247,71 +248,159 @@ void editable_number(int &number, short &sel_digit, int cbi, short min_digits, s
+ 	}
+ }
+ 
+-#define OUTFIT_SLOT() ({ int items = *((int*)0x35c7ec); items ? GetCurrentEquipmentSlot(items, 1) : 0; })
+-#define OUTFIT_UNRESOLVED() (outfit_test.state == 1 || outfit_test.state > 4)
++#define OUTFIT_SLOT(items) ((items) ? GetCurrentEquipmentSlot((items), 1) : 0)
++#define OUTFIT_BARRIER() __asm__ __volatile__("" ::: "memory")
++
++static void outfit_clear_context() {
++	outfit_sel.saved_slot = 0;
++	outfit_sel.original_config = 0;
++	outfit_sel.live_config = 0;
++	outfit_sel.original_id = 0;
++	outfit_sel.live_id = 0;
++}
++
++static void outfit_unsafe() {
++	outfit_sel.state = 2;
++}
++
++// Returns true only for a non-sticky valid out-of-context hold or UNSAFE.
++static bool outfit_drift_blocks() {
++	if(outfit_sel.state == 2) return true;
++	if(outfit_sel.state != 1) return false;
++	int items = *((int*)0x35c7ec);
++	if(!items) {
++		outfit_unsafe();
++		return true;
++	}
++	int slot = OUTFIT_SLOT(items);
++	if((unsigned)slot < 0x1000) {
++		outfit_unsafe();
++		return true;
++	}
++	if(slot != outfit_sel.saved_slot) return true;
++	volatile int *slot_word = (volatile int*)slot;
++	int config = *slot_word;
++	if(!config) {
++		outfit_unsafe();
++		return true;
++	}
++	short id = *((short*)(config + 0x0c));
++	short category = *((short*)(config + 0x0e));
++	if(config == outfit_sel.live_config && id == outfit_sel.live_id && category == 1) return false;
++	if(id == outfit_sel.original_id && category == 1) {
++		outfit_clear_context();
++		OUTFIT_BARRIER();
++		outfit_sel.state = 0;
++		return false;
++	}
++	outfit_unsafe();
++	return true;
++}
+ 
+ static void stage1_action(bool restore) {
+-	if(!restore) {
+-		if(outfit_test.state != 0 && outfit_test.state != 3) return;
+-		if(outfit_test.saved_slot || outfit_test.original_config || outfit_test.target_config) {
+-			outfit_test.state = 3;
+-			return;
+-		}
+-	} else if(outfit_test.state != 1 && outfit_test.state != 5) {
+-		if(outfit_test.state == 0) outfit_test.state = 3;
++	int items = *((int*)0x35c7ec);
++	if(!items) {
++		outfit_unsafe();
++		return;
++	}
++	int slot = OUTFIT_SLOT(items);
++	if((unsigned)slot < 0x1000) {
++		outfit_unsafe();
+ 		return;
+ 	}
+-	int slot = OUTFIT_SLOT();
+ 	volatile int *slot_word = (volatile int*)slot;
+-	int config = (unsigned)slot >= 0x1000 ? *slot_word : 0;
++	int config = *slot_word;
++	if(!config) {
++		outfit_unsafe();
++		return;
++	}
++	short current_id = *((short*)(config + 0x0c));
++	short current_category = *((short*)(config + 0x0e));
++	if(current_category != 1 || (unsigned)(outfit_sel.selected_target - 127) > 6) {
++		outfit_unsafe();
++		return;
++	}
+ 	if(restore) {
+-		if((unsigned)slot < 0x1000 || slot != outfit_test.saved_slot || !outfit_test.original_config ||
+-		   !outfit_test.target_config || config != outfit_test.target_config) {
+-			outfit_test.state = 6;
++		if(outfit_sel.state != 1 || slot != outfit_sel.saved_slot ||
++		   config != outfit_sel.live_config || current_id != outfit_sel.live_id ||
++		   !outfit_sel.original_config) {
++			outfit_unsafe();
+ 			return;
+ 		}
+-		*slot_word = outfit_test.original_config;
+-		config = *slot_word;
+-		if(config == outfit_test.original_config &&
+-		   *((short*)(config + 0x0c)) == outfit_test.original_id) {
+-			outfit_test.saved_slot = outfit_test.original_config = outfit_test.target_config = 0;
+-			outfit_test.original_id = 0;
+-			outfit_test.state = 0;
++		*slot_word = outfit_sel.original_config;
++		int back = *slot_word;
++		if(back == outfit_sel.original_config &&
++		   *((short*)(back + 0x0c)) == outfit_sel.original_id &&
++		   *((short*)(back + 0x0e)) == 1) {
++			outfit_clear_context();
++			OUTFIT_BARRIER();
++			outfit_sel.state = 0;
+ 		} else {
+-			outfit_test.state = 6;
++			outfit_unsafe();
+ 		}
+ 		return;
+ 	}
+-	short original_id = config ? *((short*)(config + 0x0c)) : 0;
+-	short selected_target = outfit_test.selected_target;
+-	if((unsigned)slot < 0x1000 || !config || (unsigned)(original_id - 127) > 6 ||
+-	   *((short*)(config + 0x0e)) != 1 || (unsigned)(selected_target - 127) > 6) {
+-		outfit_test.state = 3;
++	if(outfit_sel.state == 0) {
++		if(outfit_sel.saved_slot || outfit_sel.original_config || outfit_sel.live_config ||
++		   outfit_sel.original_id || outfit_sel.live_id || (unsigned)(current_id - 127) > 6) {
++			outfit_unsafe();
++			return;
++		}
++		if(outfit_sel.selected_target == current_id) return;
++		int manager = GetItemManager();
++		int candidate = manager ? GetItemConfig(manager, outfit_sel.selected_target) : 0;
++		if(!candidate || *((short*)(candidate + 0x0c)) != outfit_sel.selected_target ||
++		   *((short*)(candidate + 0x0e)) != 1 || candidate == config) {
++			outfit_unsafe();
++			return;
++		}
++		outfit_sel.saved_slot = slot;
++		outfit_sel.original_config = config;
++		outfit_sel.live_config = candidate;
++		outfit_sel.original_id = current_id;
++		outfit_sel.live_id = outfit_sel.selected_target;
++		OUTFIT_BARRIER();
++		outfit_sel.state = 1;
++		OUTFIT_BARRIER();
++		*slot_word = candidate;
++		int back = *slot_word;
++		if(back == candidate) return;
++		if(back == config) {
++			outfit_clear_context();
++			OUTFIT_BARRIER();
++			outfit_sel.state = 0;
++			return;
++		}
++		outfit_unsafe();
+ 		return;
+ 	}
+-	if(selected_target == original_id) return;
++	if(outfit_sel.state != 1 || slot != outfit_sel.saved_slot || config != outfit_sel.live_config ||
++	   current_id != outfit_sel.live_id) {
++		outfit_unsafe();
++		return;
++	}
++	if(outfit_sel.selected_target == outfit_sel.original_id) {
++		stage1_action(true);
++		return;
++	}
++	if(outfit_sel.selected_target == outfit_sel.live_id) return;
+ 	int manager = GetItemManager();
+-	int candidate = manager ? GetItemConfig(manager, selected_target) : 0;
+-	if(!candidate || *((short*)(candidate + 0x0c)) != outfit_test.selected_target ||
++	int candidate = manager ? GetItemConfig(manager, outfit_sel.selected_target) : 0;
++	if(!candidate || *((short*)(candidate + 0x0c)) != outfit_sel.selected_target ||
+ 	   *((short*)(candidate + 0x0e)) != 1 || candidate == config) {
+-		outfit_test.state = 3;
++		outfit_unsafe();
+ 		return;
+ 	}
+-	outfit_test.saved_slot = slot;
+-	outfit_test.original_config = config;
+-	outfit_test.target_config = candidate;
+-	outfit_test.original_id = *((short*)(config + 0x0c));
+-	outfit_test.state = 1;
++	int old_live_config = outfit_sel.live_config;
++	OUTFIT_BARRIER();
+ 	*slot_word = candidate;
+-	int active_config = *slot_word;
+-	if(active_config == candidate) {
+-		outfit_test.state = *((short*)(active_config + 0x0c)) == outfit_test.selected_target ? 1 : 5;
+-	} else if(active_config == config) {
+-		outfit_test.saved_slot = outfit_test.original_config = outfit_test.target_config = 0;
+-		outfit_test.original_id = 0;
+-		outfit_test.state = 4;
+-	} else {
+-		outfit_test.state = 6;
++	int back = *slot_word;
++	if(back == candidate) {
++		outfit_sel.live_config = candidate;
++		outfit_sel.live_id = outfit_sel.selected_target;
++		OUTFIT_BARRIER();
++	} else if(back != old_live_config) {
++		outfit_unsafe();
+ 	}
+ }
+ 
+@@ -589,6 +678,10 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 				return (void*)(*((int*)(*((int*)0x39A37C) + 0x60)) + (0x14 * (0x1F + 0x27))); // but we return the map thingy for the food chute.
+ 				break;
+ 			case 6:
++				if(outfit_sel.state != 0) {
++					playmenusound(0x6);
++					return (void*)0;
++				}
+ 				playmenusound(0x5);
+ 				return (void*)0xB3B6E0;
+ 			default:
+@@ -728,34 +821,44 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 			append_str(char_buf, "\n\n  false", char_buf_len);
+ 		}
+ 	} else if(state == MENU_OPTIONS) {
+-		if((cbi & 0x10) && !OUTFIT_UNRESOLVED()) {
+-			playmenusound(0x6);
+-			state = MENU_MAIN;
+-			hacks_menu_idx = 0;
+-			return (void*)0;
+-		} else if(cbi & 0x80) {
+-			stage1_action(true);
+-		} else if((cbi & 0x2000) && (outfit_test.state == 0 || outfit_test.state == 3)) {
+-			short selected_target = outfit_test.selected_target + 1;
+-			if((unsigned)(selected_target - 127) > 6) selected_target = 127;
+-			outfit_test.selected_target = selected_target;
+-			if(outfit_test.state == 3) outfit_test.state = 0;
+-		} else if(cbi & 0x40) {
+-			if(outfit_test.state == 0 || outfit_test.state == 3) {
+-				stage1_action(false);
+-			} else if(outfit_test.state == 1) {
+-				return HandleResumeGameTrampoline(a0, a1, a2, a3, t0);
++		bool hold = outfit_drift_blocks();
++		if(!hold) {
++			if(cbi & 0x10) {
++				if(outfit_sel.state == 0) {
++					playmenusound(0x6);
++					state = MENU_MAIN;
++					hacks_menu_idx = 0;
++					return (void*)0;
++				}
++			} else if(cbi & 0x80) {
++				if(outfit_sel.state == 1) stage1_action(true);
++			} else if(cbi & 0x2000) {
++				if(outfit_sel.state != 2) {
++					short selected_target = outfit_sel.selected_target + 1;
++					if((unsigned)(selected_target - 127) > 6) selected_target = 127;
++					outfit_sel.selected_target = selected_target;
++				}
++			} else if(cbi & 0x40) {
++				if(outfit_sel.state == 0) {
++					stage1_action(false);
++				} else if(outfit_sel.state == 1) {
++					if(outfit_sel.selected_target == outfit_sel.original_id) {
++						stage1_action(true);
++					} else if(outfit_sel.selected_target != outfit_sel.live_id) {
++						stage1_action(false);
++					} else {
++						return HandleResumeGameTrampoline(a0, a1, a2, a3, t0);
++					}
++				}
+ 			}
+ 		}
+ 
+-		int slot = OUTFIT_SLOT();
+-		int config = (unsigned)slot >= 0x1000 ? *((int*)slot) : 0;
++		int items = *((int*)0x35c7ec);
++		int slot = OUTFIT_SLOT(items);
++		int config = (unsigned)slot >= 0x1000 ? *((volatile int*)slot) : 0;
+ 		short live_id = config ? *((short*)(config + 0x0c)) : -1;
+-		if((outfit_test.state == 1 || outfit_test.state == 5) &&
+-		   ((unsigned)slot < 0x1000 || slot != outfit_test.saved_slot ||
+-		    config != outfit_test.target_config || live_id != outfit_test.selected_target)) outfit_test.state = 6;
+ 		char line[32];
+-		sprintf(line, "J%d %d>%d", outfit_test.state, live_id, outfit_test.selected_target);
++		sprintf(line, "J%d %d %d", outfit_sel.state, live_id, outfit_sel.selected_target);
+ 		append_str(char_buf, line, char_buf_len);
+ 
+ 	} else {
