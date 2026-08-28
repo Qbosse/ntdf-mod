@@ -1,0 +1,206 @@
+name: Jerdana Final Selector Stage A
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - jerdana-final-selector-stagea
+
+env:
+  OFFICIAL_PNACH_SHA256: 8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214
+  OFFICIAL_ELF_SHA256: 43eba6baafba8aa20bfa2b2c9d8c7e5fcb24eb30ce2d9c92f2bbd4eea8bacf30
+  CORRECTED_SOURCE_SHA256: ace19be88030e2955b891ce7061a1ff194939fc6039204957bcea803b8adc15e
+  STAGE2_SOURCE_SHA256: e36ca23573c15b5a3676276a4206f255cc9c0eb0c501c1980d2675b49dc38406
+  R3_SOURCE_SHA256: 2e593ddec8c804aa96e2e80859606c8de0d75d88564ad109c69e73093cb40ad7
+
+jobs:
+  official-v2-4-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup official v2.4 PS2DEV environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nodejs
+          wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
+          sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
+
+      - name: Build unmodified official source
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PS2SDK=$PS2DEV/ps2sdk
+          export GSKIT=$PS2DEV/gsKit
+          export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin
+          cd mod
+          ./build.sh
+
+      - name: Fetch and verify official release artifacts
+        run: |
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          wget -O reproducibility/official-v2.4-df_hack.elf https://github.com/monster860/ntdf-mod/releases/download/v2.4/df_hack.elf
+          test "$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')" = "$OFFICIAL_PNACH_SHA256"
+          test "$(sha256sum reproducibility/official-v2.4-df_hack.elf | awk '{print $1}')" = "$OFFICIAL_ELF_SHA256"
+
+      - name: Require byte-identical official regression
+        run: |
+          test "$(sha256sum mod/934F9081.pnach | awk '{print $1}')" = "$OFFICIAL_PNACH_SHA256"
+          test "$(sha256sum mod/df_hack.elf | awk '{print $1}')" = "$OFFICIAL_ELF_SHA256"
+          test "$(wc -l < mod/934F9081.pnach)" -eq 3914
+          node reproducibility/verify-r-mips26.js mod/mod.o 0x3043B0 mod/934F9081.pnach reproducibility/official-r-mips26-report.txt memset=0x2BFE8C
+          node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/official-layout-report.txt
+          {
+            echo "official_regression=pass"
+            sha256sum mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c mod/mod.ii mod/mod.s mod/mod.o elf_processor.js reproducibility/verify-r-mips26.js
+            wc -l mod/934F9081.pnach
+          } | tee reproducibility/official-regression-report.txt
+
+      - name: Preserve official regression source state
+        if: always()
+        run: |
+          git diff -- elf_processor.js mod/mod.cpp mod/make_mod.js mod/build.sh > reproducibility/official-source-diff.patch
+          git status --short > reproducibility/official-git-status.txt
+          git rev-parse HEAD > reproducibility/source-commit.txt
+
+      - name: Upload official regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-v2.4-r3-multitarget-regression
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.ii
+            mod/mod.s
+            mod/mod.o
+            mod/loader/patch.c
+            reproducibility/official-v2.4-934F9081.pnach
+            reproducibility/official-v2.4-df_hack.elf
+            reproducibility/official-r-mips26-report.txt
+            reproducibility/official-layout-report.txt
+            reproducibility/official-regression-report.txt
+            reproducibility/official-source-diff.patch
+            reproducibility/official-git-status.txt
+            reproducibility/source-commit.txt
+            reproducibility/verify-r-mips26.js
+            elf_processor.js
+
+  final-selector-stagea:
+    needs: official-v2-4-regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup official v2.4 PS2DEV environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nodejs unzip
+          wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
+          sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
+
+      - name: Reconstruct exact R3 parent and apply Stage-A source delta
+        run: |
+          git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+          git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+          test "$(sha256sum mod/mod.cpp | awk '{print $1}')" = "$CORRECTED_SOURCE_SHA256"
+          git apply --ignore-whitespace --check reproducibility/jerdana-stage2-preview-safety-readback.patch
+          git apply --ignore-whitespace reproducibility/jerdana-stage2-preview-safety-readback.patch
+          test "$(sha256sum mod/mod.cpp | awk '{print $1}')" = "$STAGE2_SOURCE_SHA256"
+          git apply --ignore-whitespace --check reproducibility/jerdana-r3-multitarget-diagnostic.patch
+          git apply --ignore-whitespace reproducibility/jerdana-r3-multitarget-diagnostic.patch
+          test "$(sha256sum mod/mod.cpp | awk '{print $1}')" = "$R3_SOURCE_SHA256"
+          mkdir -p reproducibility/previous/r3-source
+          cp mod/mod.cpp reproducibility/previous/r3-source/mod.cpp
+          git apply --ignore-whitespace --check reproducibility/jerdana-final-selector-stagea.patch
+          git apply --ignore-whitespace reproducibility/jerdana-final-selector-stagea.patch
+          diff -u reproducibility/previous/r3-source/mod.cpp mod/mod.cpp > reproducibility/source-diff-vs-r3-parent.patch || test $? -eq 1
+          git diff --stat -- reproducibility/jerdana-final-selector-stagea.patch mod/mod.cpp > reproducibility/stagea-source-scope.txt
+
+      - name: Build final selector Stage-A candidate
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PS2SDK=$PS2DEV/ps2sdk
+          export GSKIT=$PS2DEV/gsKit
+          export PATH=$PATH:$PS2DEV/bin:$PS2DEV/ee/bin:$PS2DEV/iop/bin:$PS2DEV/dvp/bin:$PS2SDK/bin
+          cd mod
+          ./build.sh
+
+      - name: Fetch official baseline
+        run: |
+          wget -O reproducibility/official-v2.4-934F9081.pnach https://github.com/monster860/ntdf-mod/releases/download/v2.4/934F9081.pnach
+          test "$(sha256sum reproducibility/official-v2.4-934F9081.pnach | awk '{print $1}')" = "$OFFICIAL_PNACH_SHA256"
+
+      - name: Preserve generated disassembly and symbol sizes
+        run: |
+          export PS2DEV=/usr/local/ps2dev
+          export PATH=$PATH:$PS2DEV/ee/bin
+          ee-objdump -dr mod/mod.o > reproducibility/mod-objdump-dr.txt
+          ee-readelf -rWs mod/mod.o > reproducibility/mod-readelf-rws.txt
+          {
+            echo "candidate_symbols:"
+            ee-nm -S mod/mod.o | grep -E 'stage1_action|ResumeGameHook|outfit_sel|HandleResumeGameTrampoline' || true
+          } | tee reproducibility/symbol-size-report.txt
+
+      - name: Verify relocations, generated safety semantics, hooks, and layout
+        run: |
+          node reproducibility/verify-r-mips26.js mod/mod.o 0x3043B0 mod/934F9081.pnach reproducibility/candidate-r-mips26-report.txt memset=0x2BFE8C
+          node reproducibility/verify-final-selector-stagea.js
+          node scripts/compare-pnach-layout.js reproducibility/official-v2.4-934F9081.pnach mod/934F9081.pnach | tee reproducibility/layout-vs-official.txt
+
+      - name: Record candidate artifact identities
+        run: |
+          {
+            echo "build_environment=GitHub Actions official v2.4 PS2DEV v1.1"
+            echo "parent_source=${R3_SOURCE_SHA256}"
+            echo "authorized_change=Stage-A confirmed selector: numeric Right-only cursor, immutable original, direct reselection, readback, drift, Save guard"
+            echo "R_MIPS_26_fix_preserved=yes"
+            echo "installed=no"
+            echo "runtime_tested=no"
+            sha256sum mod/mod.cpp mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c mod/mod.ii mod/mod.s mod/mod.o elf_processor.js reproducibility/jerdana-final-selector-stagea.patch reproducibility/verify-r-mips26.js reproducibility/verify-final-selector-stagea.js
+            wc -l mod/934F9081.pnach
+          } | tee reproducibility/candidate-hash-report.txt
+
+      - name: Preserve final source state
+        if: always()
+        run: |
+          git diff -- elf_processor.js mod/mod.cpp mod/make_mod.js mod/build.sh reproducibility/jerdana-final-selector-stagea.patch reproducibility/verify-final-selector-stagea.js .github/workflows/jerdana-final-selector-stagea.yml > reproducibility/candidate-source-diff.patch
+          git status --short > reproducibility/candidate-git-status.txt
+          git rev-parse HEAD > reproducibility/source-commit.txt
+
+      - name: Upload final selector Stage-A evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerdana-final-selector-stagea
+          path: |
+            mod/934F9081.pnach
+            mod/df_hack.elf
+            mod/mod.cpp
+            mod/mod.ii
+            mod/mod.s
+            mod/mod.o
+            mod/loader/patch.c
+            reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
+            reproducibility/jerdana-stage2-preview-safety-readback.patch
+            reproducibility/jerdana-r3-multitarget-diagnostic.patch
+            reproducibility/jerdana-final-selector-stagea.patch
+            reproducibility/source-diff-vs-r3-parent.patch
+            reproducibility/stagea-source-scope.txt
+            reproducibility/candidate-r-mips26-report.txt
+            reproducibility/final-selector-stagea-38-gate-report.txt
+            reproducibility/source-isolation-report.txt
+            reproducibility/stageb-absence-report.txt
+            reproducibility/hook-address-report.txt
+            reproducibility/hook-target-report.txt
+            reproducibility/layout-vs-official.txt
+            reproducibility/candidate-hash-report.txt
+            reproducibility/mod-objdump-dr.txt
+            reproducibility/mod-readelf-rws.txt
+            reproducibility/symbol-size-report.txt
+            reproducibility/candidate-source-diff.patch
+            reproducibility/candidate-git-status.txt
+            reproducibility/source-commit.txt
+            reproducibility/verify-r-mips26.js
+            reproducibility/verify-final-selector-stagea.js
+            .github/workflows/jerdana-final-selector-stagea.yml
+            elf_processor.js
