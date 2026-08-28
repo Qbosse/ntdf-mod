@@ -1,0 +1,333 @@
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -248,159 +248,97 @@
+ 	}
+ }
+ 
+-#define OUTFIT_SLOT(items) ((items) ? GetCurrentEquipmentSlot((items), 1) : 0)
+-#define OUTFIT_BARRIER() __asm__ __volatile__("" ::: "memory")
+-
+-static void outfit_clear_context() {
++#define OUTFIT_BARRIER() __asm__ __volatile__("" ::: "memory")
++
++static void outfit_clear_context() {
+ 	outfit_sel.saved_slot = 0;
+ 	outfit_sel.original_config = 0;
+ 	outfit_sel.live_config = 0;
+ 	outfit_sel.original_id = 0;
+-	outfit_sel.live_id = 0;
+-}
+-
+-static void outfit_unsafe() {
+-	outfit_sel.state = 2;
+-}
+-
+-// Returns true only for a non-sticky valid out-of-context hold or UNSAFE.
+-static bool outfit_drift_blocks() {
+-	if(outfit_sel.state == 2) return true;
+-	if(outfit_sel.state != 1) return false;
+-	int items = *((int*)0x35c7ec);
+-	if(!items) {
+-		outfit_unsafe();
+-		return true;
+-	}
+-	int slot = OUTFIT_SLOT(items);
+-	if((unsigned)slot < 0x1000) {
+-		outfit_unsafe();
+-		return true;
+-	}
+-	if(slot != outfit_sel.saved_slot) return true;
+-	volatile int *slot_word = (volatile int*)slot;
+-	int config = *slot_word;
+-	if(!config) {
+-		outfit_unsafe();
+-		return true;
+-	}
+-	short id = *((short*)(config + 0x0c));
+-	short category = *((short*)(config + 0x0e));
+-	if(config == outfit_sel.live_config && id == outfit_sel.live_id && category == 1) return false;
+-	if(id == outfit_sel.original_id && category == 1) {
+-		outfit_clear_context();
+-		OUTFIT_BARRIER();
+-		outfit_sel.state = 0;
+-		return false;
+-	}
+-	outfit_unsafe();
+-	return true;
+-}
++	outfit_sel.live_id = 0;
++}
+ 
+-static void stage1_action(bool restore) {
+-	int items = *((int*)0x35c7ec);
+-	if(!items) {
+-		outfit_unsafe();
+-		return;
+-	}
+-	int slot = OUTFIT_SLOT(items);
+-	if((unsigned)slot < 0x1000) {
+-		outfit_unsafe();
++static void stage1_action(int slot, int config, short current_id, short current_category, bool restore) {
++	volatile int *slot_word = (volatile int*)slot;
++	if((unsigned)slot < 0x1000 || !config || current_category != 1 ||
++	   (unsigned)(outfit_sel.selected_target - 127) > 6) {
++		outfit_sel.state = 2;
+ 		return;
+ 	}
+-	volatile int *slot_word = (volatile int*)slot;
+-	int config = *slot_word;
+-	if(!config) {
+-		outfit_unsafe();
+-		return;
+-	}
+-	short current_id = *((short*)(config + 0x0c));
+-	short current_category = *((short*)(config + 0x0e));
+-	if(current_category != 1 || (unsigned)(outfit_sel.selected_target - 127) > 6) {
+-		outfit_unsafe();
+-		return;
+-	}
+-	if(restore) {
+-		if(outfit_sel.state != 1 || slot != outfit_sel.saved_slot ||
+-		   config != outfit_sel.live_config || current_id != outfit_sel.live_id ||
+-		   !outfit_sel.original_config) {
+-			outfit_unsafe();
++	if(outfit_sel.state == 1) {
++		if(slot != outfit_sel.saved_slot || config != outfit_sel.live_config ||
++		   current_id != outfit_sel.live_id) {
++			outfit_sel.state = 2;
+ 			return;
+ 		}
+-		*slot_word = outfit_sel.original_config;
+-		int back = *slot_word;
+-		if(back == outfit_sel.original_config &&
+-		   *((short*)(back + 0x0c)) == outfit_sel.original_id &&
+-		   *((short*)(back + 0x0e)) == 1) {
+-			outfit_clear_context();
+-			OUTFIT_BARRIER();
+-			outfit_sel.state = 0;
+-		} else {
+-			outfit_unsafe();
++		if(restore) {
++			if(!outfit_sel.original_config) {
++				outfit_sel.state = 2;
++				return;
++			}
++			*slot_word = outfit_sel.original_config;
++			int back = *slot_word;
++			if(back == outfit_sel.original_config &&
++			   *((short*)(back + 0x0c)) == outfit_sel.original_id &&
++			   *((short*)(back + 0x0e)) == 1) {
++				outfit_clear_context();
++				OUTFIT_BARRIER();
++				outfit_sel.state = 0;
++			} else {
++				outfit_sel.state = 2;
++			}
++			return;
+ 		}
++	} else if(outfit_sel.state == 0) {
++		if((outfit_sel.saved_slot | outfit_sel.original_config | outfit_sel.live_config |
++		    (int)outfit_sel.original_id | (int)outfit_sel.live_id) ||
++		   (unsigned)(current_id - 127) > 6) {
++			outfit_sel.state = 2;
++			return;
++		}
++		if(outfit_sel.selected_target == current_id) return;
++	} else {
++		outfit_sel.state = 2;
+ 		return;
+ 	}
+-	if(outfit_sel.state == 0) {
+-		if(outfit_sel.saved_slot || outfit_sel.original_config || outfit_sel.live_config ||
+-		   outfit_sel.original_id || outfit_sel.live_id || (unsigned)(current_id - 127) > 6) {
+-			outfit_unsafe();
+-			return;
+-		}
+-		if(outfit_sel.selected_target == current_id) return;
+-		int manager = GetItemManager();
+-		int candidate = manager ? GetItemConfig(manager, outfit_sel.selected_target) : 0;
+-		if(!candidate || *((short*)(candidate + 0x0c)) != outfit_sel.selected_target ||
+-		   *((short*)(candidate + 0x0e)) != 1 || candidate == config) {
+-			outfit_unsafe();
+-			return;
+-		}
+-		outfit_sel.saved_slot = slot;
+-		outfit_sel.original_config = config;
+-		outfit_sel.live_config = candidate;
+-		outfit_sel.original_id = current_id;
+-		outfit_sel.live_id = outfit_sel.selected_target;
+-		OUTFIT_BARRIER();
+-		outfit_sel.state = 1;
+-		OUTFIT_BARRIER();
+-		*slot_word = candidate;
+-		int back = *slot_word;
+-		if(back == candidate) return;
+-		if(back == config) {
+-			outfit_clear_context();
+-			OUTFIT_BARRIER();
+-			outfit_sel.state = 0;
+-			return;
+-		}
+-		outfit_unsafe();
+-		return;
+-	}
+-	if(outfit_sel.state != 1 || slot != outfit_sel.saved_slot || config != outfit_sel.live_config ||
+-	   current_id != outfit_sel.live_id) {
+-		outfit_unsafe();
+-		return;
+-	}
+-	if(outfit_sel.selected_target == outfit_sel.original_id) {
+-		stage1_action(true);
+-		return;
+-	}
+-	if(outfit_sel.selected_target == outfit_sel.live_id) return;
+ 	int manager = GetItemManager();
+-	int candidate = manager ? GetItemConfig(manager, outfit_sel.selected_target) : 0;
+-	if(!candidate || *((short*)(candidate + 0x0c)) != outfit_sel.selected_target ||
++	int candidate = manager ? GetItemConfig(manager, outfit_sel.selected_target) : 0;
++	if(!candidate || *((short*)(candidate + 0x0c)) != outfit_sel.selected_target ||
+ 	   *((short*)(candidate + 0x0e)) != 1 || candidate == config) {
+-		outfit_unsafe();
++		outfit_sel.state = 2;
+ 		return;
+ 	}
+-	int old_live_config = outfit_sel.live_config;
+-	OUTFIT_BARRIER();
++	if(outfit_sel.state == 0) {
++		outfit_sel.saved_slot = slot;
++		outfit_sel.original_config = config;
++		outfit_sel.live_config = candidate;
++		outfit_sel.original_id = current_id;
++		outfit_sel.live_id = outfit_sel.selected_target;
++		OUTFIT_BARRIER();
++		outfit_sel.state = 1;
++		OUTFIT_BARRIER();
++		*slot_word = candidate;
++		int back = *slot_word;
++		if(back == candidate) return;
++		if(back == config) {
++			outfit_clear_context();
++			OUTFIT_BARRIER();
++			outfit_sel.state = 0;
++			return;
++		}
++		outfit_sel.state = 2;
++		return;
++	}
++	int old_live_config = outfit_sel.live_config;
++	OUTFIT_BARRIER();
+ 	*slot_word = candidate;
+-	int back = *slot_word;
+-	if(back == candidate) {
+-		outfit_sel.live_config = candidate;
+-		outfit_sel.live_id = outfit_sel.selected_target;
+-		OUTFIT_BARRIER();
+-	} else if(back != old_live_config) {
+-		outfit_unsafe();
++	int back = *slot_word;
++	if(back == candidate) {
++		outfit_sel.live_config = candidate;
++		outfit_sel.live_id = outfit_sel.selected_target;
++		OUTFIT_BARRIER();
++	} else if(back != old_live_config) {
++		outfit_sel.state = 2;
+ 	}
+ }
+ 
+@@ -820,43 +758,62 @@
+ 		} else {
+ 			append_str(char_buf, "\n\n  false", char_buf_len);
+ 		}
+-	} else if(state == MENU_OPTIONS) {
+-		bool hold = outfit_drift_blocks();
+-		if(!hold) {
+-			if(cbi & 0x10) {
+-				if(outfit_sel.state == 0) {
+-					playmenusound(0x6);
+-					state = MENU_MAIN;
+-					hacks_menu_idx = 0;
+-					return (void*)0;
+-				}
+-			} else if(cbi & 0x80) {
+-				if(outfit_sel.state == 1) stage1_action(true);
+-			} else if(cbi & 0x2000) {
+-				if(outfit_sel.state != 2) {
+-					short selected_target = outfit_sel.selected_target + 1;
+-					if((unsigned)(selected_target - 127) > 6) selected_target = 127;
+-					outfit_sel.selected_target = selected_target;
+-				}
+-			} else if(cbi & 0x40) {
+-				if(outfit_sel.state == 0) {
+-					stage1_action(false);
+-				} else if(outfit_sel.state == 1) {
+-					if(outfit_sel.selected_target == outfit_sel.original_id) {
+-						stage1_action(true);
+-					} else if(outfit_sel.selected_target != outfit_sel.live_id) {
+-						stage1_action(false);
+-					} else {
+-						return HandleResumeGameTrampoline(a0, a1, a2, a3, t0);
+-					}
+-				}
++	} else if(state == MENU_OPTIONS) {
++		int items = *((int*)0x35c7ec);
++		int slot = items ? GetCurrentEquipmentSlot(items, 1) : 0;
++		int config = (unsigned)slot >= 0x1000 ? *((volatile int*)slot) : 0;
++		short current_id = config ? *((short*)(config + 0x0c)) : -1;
++		short current_category = config ? *((short*)(config + 0x0e)) : -1;
++		bool hold = false;
++		if(outfit_sel.state == 2) {
++			hold = true;
++		} else if(outfit_sel.state == 1) {
++			if(!items || (unsigned)slot < 0x1000 || !config) {
++				outfit_sel.state = 2;
++				hold = true;
++			} else if(slot != outfit_sel.saved_slot) {
++				hold = true;
++			} else if(config == outfit_sel.live_config && current_id == outfit_sel.live_id && current_category == 1) {
++			} else if(current_id == outfit_sel.original_id && current_category == 1) {
++				outfit_clear_context();
++				OUTFIT_BARRIER();
++				outfit_sel.state = 0;
++			} else {
++				outfit_sel.state = 2;
++				hold = true;
++			}
++		}
++		if(!hold) {
++			if(cbi & 0x10) {
++				if(outfit_sel.state == 0) {
++					playmenusound(0x6);
++					state = MENU_MAIN;
++					hacks_menu_idx = 0;
++					return (void*)0;
++				}
++			} else if(cbi & 0x80) {
++				if(outfit_sel.state == 1) stage1_action(slot, config, current_id, current_category, true);
++			} else if(cbi & 0x2000) {
++				short selected_target = outfit_sel.selected_target + 1;
++				if((unsigned)(selected_target - 127) > 6) selected_target = 127;
++				outfit_sel.selected_target = selected_target;
++			} else if(cbi & 0x40) {
++				if(outfit_sel.state == 0) {
++					stage1_action(slot, config, current_id, current_category, false);
++				} else if(outfit_sel.state == 1) {
++					if(outfit_sel.selected_target == outfit_sel.original_id) {
++						stage1_action(slot, config, current_id, current_category, true);
++					} else if(outfit_sel.selected_target != outfit_sel.live_id) {
++						stage1_action(slot, config, current_id, current_category, false);
++					} else {
++						return HandleResumeGameTrampoline(a0, a1, a2, a3, t0);
++					}
++				}
+ 			}
+ 		}
+ 
+-		int items = *((int*)0x35c7ec);
+-		int slot = OUTFIT_SLOT(items);
+-		int config = (unsigned)slot >= 0x1000 ? *((volatile int*)slot) : 0;
+-		short live_id = config ? *((short*)(config + 0x0c)) : -1;
++		int display_config = (unsigned)slot >= 0x1000 ? *((volatile int*)slot) : 0;
++		short live_id = display_config ? *((short*)(display_config + 0x0c)) : -1;
+ 		char line[32];
+ 		sprintf(line, "J%d %d %d", outfit_sel.state, live_id, outfit_sel.selected_target);
+ 		append_str(char_buf, line, char_buf_len);
