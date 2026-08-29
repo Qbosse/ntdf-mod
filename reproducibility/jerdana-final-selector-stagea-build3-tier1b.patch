@@ -1,0 +1,119 @@
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -258,7 +258,7 @@
+ 	outfit_sel.live_id = 0;
+ }
+ 
+-static void stage1_action(int slot, int config, short current_id, short current_category, bool restore) {
++static void stage1_action(int slot, int config, int current_id, int current_category, bool restore) {
+ 	volatile int *slot_word = (volatile int*)slot;
+ 	if((unsigned)slot < 0x1000 || !config || current_category != 1 ||
+ 	   (unsigned)(outfit_sel.selected_target - 127) > 6) {
+@@ -759,63 +759,72 @@
+ 			append_str(char_buf, "\n\n  false", char_buf_len);
+ 		}
+ 	} else if(state == MENU_OPTIONS) {
++		OutfitSelState *const outfit = &outfit_sel;
+ 		int items = *((int*)0x35c7ec);
+ 		int slot = items ? GetCurrentEquipmentSlot(items, 1) : 0;
+-		int config = (unsigned)slot >= 0x1000 ? *((volatile int*)slot) : 0;
+-		short current_id = config ? *((short*)(config + 0x0c)) : -1;
+-		short current_category = config ? *((short*)(config + 0x0e)) : -1;
+-		bool hold = false;
+-		if(outfit_sel.state == 2) {
+-			hold = true;
+-		} else if(outfit_sel.state == 1) {
+-			if(!items || (unsigned)slot < 0x1000 || !config) {
+-				outfit_sel.state = 2;
+-				hold = true;
+-			} else if(slot != outfit_sel.saved_slot) {
+-				hold = true;
+-			} else if(config == outfit_sel.live_config && current_id == outfit_sel.live_id && current_category == 1) {
+-			} else if(current_id == outfit_sel.original_id && current_category == 1) {
+-				outfit_clear_context();
+-				OUTFIT_BARRIER();
+-				outfit_sel.state = 0;
+-			} else {
+-				outfit_sel.state = 2;
+-				hold = true;
+-			}
++		volatile int *slot_word = (unsigned)slot >= 0x1000 ? (volatile int*)slot : 0;
++		int config = slot_word ? *slot_word : 0;
++		int current_id = -1;
++		int current_category = -1;
++		if(config) {
++			current_id = *((short*)(config + 0x0c));
++			current_category = *((short*)(config + 0x0e));
+ 		}
+-		if(!hold) {
++		if(outfit->state == 1) {
++			if(!items || !slot_word || !config) {
++				outfit->state = 2;
++			} else if(slot == outfit->saved_slot) {
++				if(config == outfit->live_config && current_id == outfit->live_id && current_category == 1) {
++				} else if(current_id == outfit->original_id && current_category == 1) {
++					outfit_clear_context();
++					OUTFIT_BARRIER();
++					outfit->state = 0;
++				} else {
++					outfit->state = 2;
++				}
++			}
++		}
++		bool action = false;
++		bool restore = false;
++		if(outfit->state != 2 &&
++		   !(outfit->state == 1 && items && slot_word && config && slot != outfit->saved_slot)) {
+ 			if(cbi & 0x10) {
+-				if(outfit_sel.state == 0) {
++				if(outfit->state == 0) {
+ 					playmenusound(0x6);
+ 					state = MENU_MAIN;
+ 					hacks_menu_idx = 0;
+ 					return (void*)0;
+ 				}
+ 			} else if(cbi & 0x80) {
+-				if(outfit_sel.state == 1) stage1_action(slot, config, current_id, current_category, true);
++				if(outfit->state == 1) {
++					action = true;
++					restore = true;
++				}
+ 			} else if(cbi & 0x2000) {
+-				short selected_target = outfit_sel.selected_target + 1;
++				int selected_target = (int)outfit->selected_target + 1;
+ 				if((unsigned)(selected_target - 127) > 6) selected_target = 127;
+-				outfit_sel.selected_target = selected_target;
++				outfit->selected_target = (short)selected_target;
+ 			} else if(cbi & 0x40) {
+-				if(outfit_sel.state == 0) {
+-					stage1_action(slot, config, current_id, current_category, false);
+-				} else if(outfit_sel.state == 1) {
+-					if(outfit_sel.selected_target == outfit_sel.original_id) {
+-						stage1_action(slot, config, current_id, current_category, true);
+-					} else if(outfit_sel.selected_target != outfit_sel.live_id) {
+-						stage1_action(slot, config, current_id, current_category, false);
++				if(outfit->state == 0) {
++					if(outfit->selected_target != current_id) action = true;
++				} else if(outfit->state == 1) {
++					if(outfit->selected_target == outfit->original_id) {
++						action = true;
++						restore = true;
++					} else if(outfit->selected_target != outfit->live_id) {
++						action = true;
+ 					} else {
+ 						return HandleResumeGameTrampoline(a0, a1, a2, a3, t0);
+ 					}
+ 				}
+ 			}
++			if(action) stage1_action(slot, config, current_id, current_category, restore);
+ 		}
+ 
+-		int display_config = (unsigned)slot >= 0x1000 ? *((volatile int*)slot) : 0;
++		int display_config = slot_word ? *slot_word : 0;
+ 		short live_id = display_config ? *((short*)(display_config + 0x0c)) : -1;
+ 		char line[32];
+-		sprintf(line, "J%d %d %d", outfit_sel.state, live_id, outfit_sel.selected_target);
++		sprintf(line, "J%d %d %d", outfit->state, live_id, outfit->selected_target);
+ 		append_str(char_buf, line, char_buf_len);
+ 
+ 	} else {

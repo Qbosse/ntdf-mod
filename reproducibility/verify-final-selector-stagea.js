@@ -48,10 +48,21 @@ function body(disassembly, symbol) {
   const next = /\n[0-9a-f]+ <[^>]+>:/i.exec(after);
   return disassembly.slice(match.index, next ? match.index + match[0].length + next.index : undefined);
 }
-function selectorAction(disassembly) {
-  const match = disassembly.match(/^([0-9a-f]+) <(_Z13stage1_action[^>]*)>:/mi);
-  if (!match) throw new Error("missing stage1_action overload");
-  return body(disassembly, match[2]);
+function selectorAction(disassembly, source) {
+  const matches = [...disassembly.matchAll(/^([0-9a-f]+) <([^>]*stage1_action[^>]*)>:/gmi)];
+  if (matches.length !== 1) throw new Error(`stage1_action symbols=${matches.length}`);
+  const signature = source.match(/static void stage1_action\(([^)]*)\)/);
+  if (!signature) throw new Error("missing stage1_action source signature");
+  const parameters = signature[1].split(",").map((parameter) => parameter.trim());
+  if (parameters.length !== 5 || !parameters.slice(0, 4).every((parameter) => /^int\b/.test(parameter)) || !/^bool\b/.test(parameters[4])) {
+    throw new Error(`unexpected stage1_action ABI source signature: ${signature[1]}`);
+  }
+  return {
+    symbol: matches[0][2],
+    signature: signature[1],
+    body: body(disassembly, matches[0][2]),
+    entryRoots: { a0: "equipment-slot", a1: "current-config", a2: "current-id", a3: "current-category", t0: "restore-mode" },
+  };
 }
 function rows(text) {
   return [...text.matchAll(/^\s*([0-9a-f]+):\s+[0-9a-f]{8}\s+(.+)$/gmi)]
@@ -64,26 +75,112 @@ function assignment(row) {
   if (or) return { dst: or[1], src: or[2] };
   const addiuZero = row.asm.match(/^addiu\s+([^,]+),([^,]+),0$/);
   if (addiuZero) return { dst: addiuZero[1], src: addiuZero[2] };
-  const generic = row.asm.match(/^(?:lui|addiu|ori|andi|sltiu|sll|sra|lw|lhu|lh|jalr)\s+([^,\s]+)/);
+  const generic = row.asm.match(/^(?:lui|addiu|ori|andi|sltiu|sll|sra|lw|lhu|lh)\s+([^,\s]+)/);
   return generic ? { dst: generic[1], src: null } : null;
 }
-function slotStoreReloadPairs(instructions) {
-  const origins = { a0: "slot" };
-  const pairs = [];
-  for (let i = 0; i < instructions.length; i++) {
-    const row = instructions[i];
-    const store = row.asm.match(/^sw\s+([^,]+),0\(([^)]+)\)$/);
-    if (store) {
-      for (let j = i + 1; j <= i + 8 && j < instructions.length; j++) {
-        const load = instructions[j].asm.match(/^lw\s+([^,]+),0\(([^)]+)\)$/);
-        if (load && load[2] === store[2]) {
-          pairs.push({ store: row, load: instructions[j], base: store[2], origin: origins[store[2]] || "unknown" });
-          break;
-        }
+function branchTarget(asm) {
+  const match = asm.match(/\b([0-9a-f]+)\s+<[^>]+>/i);
+  return match ? parseInt(match[1], 16) : null;
+}
+function controlKind(asm) {
+  const operation = asm.split(/\s+/)[0].toLowerCase();
+  if (operation === "jr") return "return";
+  if (operation === "j") return "jump";
+  if (operation === "jal" || operation === "jalr") return "call";
+  if (/^b(?:eq|ne|gez|gtz|lez|ltz|al|c1)/.test(operation)) return operation.endsWith("l") ? "branch-likely" : "branch";
+  return null;
+}
+function cfg(instructions) {
+  const byOffset = new Map(instructions.map((row, index) => [row.offset, index]));
+  const successors = instructions.map(() => new Set());
+  const add = (from, to) => {
+    if (from >= 0 && from < instructions.length && to >= 0 && to < instructions.length) successors[from].add(to);
+  };
+  for (let index = 0; index < instructions.length; index++) {
+    const kind = controlKind(instructions[index].asm);
+    if (kind) {
+      add(index, index + 1);
+      if (index + 1 >= instructions.length) continue;
+      if (kind === "return") continue;
+      if (kind === "call") {
+        add(index + 1, index + 2);
+        continue;
       }
+      const target = branchTarget(instructions[index].asm);
+      if (target === null || !byOffset.has(target)) throw new Error(`unresolved ${kind} target at ${hex(instructions[index].offset, 4)}`);
+      if (kind === "branch-likely") {
+        add(index, index + 2);
+        add(index + 1, byOffset.get(target));
+      } else {
+        add(index + 1, byOffset.get(target));
+        if (kind === "branch") add(index + 1, index + 2);
+      }
+      continue;
     }
-    const update = assignment(row);
-    if (update) origins[update.dst] = update.src ? (origins[update.src] || "unknown") : "other";
+    if (index > 0 && controlKind(instructions[index - 1].asm)) continue;
+    add(index, index + 1);
+  }
+  const predecessors = instructions.map(() => new Set());
+  successors.forEach((targets, from) => targets.forEach((to) => predecessors[to].add(from)));
+  return { predecessors };
+}
+function outfitRelocations(readelf) {
+  const offsets = new Set();
+  for (const match of readelf.matchAll(/^([0-9a-f]+)\s+.*R_MIPS_(?:HI16|LO16)\s+.*\boutfit_sel\b/gmi)) {
+    offsets.add(parseInt(match[1], 16));
+  }
+  return offsets;
+}
+function definition(row, register, selectorRelocations) {
+  if (selectorRelocations.has(row.offset)) {
+    const assignment = row.asm.match(/^(?:lui|addiu|ori)\s+([^,\s]+)/);
+    if (assignment && assignment[1] === register) return { kind: "root", root: "selector-state" };
+  }
+  const copy = assignment(row);
+  if (copy && copy.dst === register) return copy.src ? { kind: "copy", src: copy.src } : { kind: "other" };
+  if (/^(?:jal|jalr)\b/.test(row.asm) && /^(a[0-3]|t[0-9]|v[01])$/.test(register)) return { kind: "other" };
+  return null;
+}
+function provenanceAt(instructions, graph, selectorRelocations, entryRoots, point, register) {
+  const roots = new Set();
+  const visited = new Set();
+  function visit(index, current) {
+    const key = `${index}:${current}`;
+    if (visited.has(key)) {
+      roots.add("cycle");
+      return;
+    }
+    visited.add(key);
+    const predecessors = graph.predecessors[index];
+    if (!predecessors.size) {
+      roots.add(entryRoots[current] || "unknown-entry");
+      return;
+    }
+    predecessors.forEach((predecessor) => {
+      const found = definition(instructions[predecessor], current, selectorRelocations);
+      if (!found) {
+        visit(predecessor, current);
+      } else if (found.kind === "copy") {
+        visit(predecessor, found.src);
+      } else if (found.kind === "root") {
+        roots.add(found.root);
+      } else {
+        roots.add("other");
+      }
+    });
+  }
+  visit(point, register);
+  return [...roots].sort();
+}
+function slotStoreReloadPairs(instructions, selectorRelocations, entryRoots) {
+  const graph = cfg(instructions);
+  const pairs = [];
+  for (let index = 0; index + 1 < instructions.length; index++) {
+    const store = instructions[index].asm.match(/^sw\s+([^,]+),0\(([^)]+)\)$/);
+    const load = instructions[index + 1].asm.match(/^lw\s+([^,]+),0\(([^)]+)\)$/);
+    if (!store || !load || load[2] !== store[2]) continue;
+    const origins = provenanceAt(instructions, graph, selectorRelocations, entryRoots, index, store[2]);
+    pairs.push({ store: instructions[index], load: instructions[index + 1], base: store[2], origins });
   }
   return pairs;
 }
@@ -117,15 +214,17 @@ function check(number, label, callback) {
 }
 
 const source = fs.readFileSync("mod/mod.cpp", "utf8");
-const patch = fs.readFileSync("reproducibility/jerdana-final-selector-stagea-byte-recovery.patch", "utf8");
+const patch = fs.readFileSync("reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch", "utf8");
 const disassembly = fs.readFileSync("reproducibility/mod-objdump-dr.txt", "utf8");
 const readelf = fs.readFileSync("reproducibility/mod-readelf-rws.txt", "utf8");
-const stage = selectorAction(disassembly);
+const action = selectorAction(disassembly, source);
+const stage = action.body;
 const resume = body(disassembly, "ResumeGameHook");
 const stageRows = rows(stage);
 const resumeRows = rows(resume);
-const slotPairs = slotStoreReloadPairs(stageRows);
-const equipmentPairs = slotPairs.filter((pair) => pair.origin === "slot");
+const selectorRelocations = outfitRelocations(readelf);
+const slotPairs = slotStoreReloadPairs(stageRows, selectorRelocations, action.entryRoots);
+const equipmentPairs = slotPairs.filter((pair) => pair.origins.length === 1 && pair.origins[0] === "equipment-slot");
 const nativeCalls = nativeSlotCalls(resumeRows);
 const candidate = pnach("mod/934F9081.pnach");
 const official = pnach("reproducibility/official-v2.4-934F9081.pnach");
@@ -139,11 +238,11 @@ check(1, "one Options-frame acquisition dominates selector dispatch", () => {
   if (nativeCalls.length !== 1) throw new Error(`generated GetCurrentEquipmentSlot calls=${nativeCalls.length}`);
 });
 check(2, "low-slot guard precedes slot dereference", () => {
-  need(source, /\(unsigned\)slot >= 0x1000 \? \*\(\(volatile int\*\)slot\) : 0/, "source low-slot guard");
+  need(source, /volatile int \*slot_word = \(unsigned\)slot >= 0x1000 \? \(volatile int\*\)slot : 0;/, "source low-slot guard");
   need(resume, /\bsltiu\s+[^,]+,[^,]+,(?:4096|0x1000)\b/, "generated low-slot guard");
 });
 check(3, "config guard precedes descriptor reads", () =>
-  need(source, /short current_id = config \? \*\(\(short\*\)\(config \+ 0x0c\)\) : -1;/, "config guard"));
+  need(source, /if\(config\) \{\s*current_id = \*\(\(short\*\)\(config \+ 0x0c\)\);\s*current_category = \*\(\(short\*\)\(config \+ 0x0e\)\);/s, "single config guard"));
 check(4, "original ID is captured dynamically", () => {
   need(source, /outfit_sel\.original_id = current_id;/, "dynamic original capture");
   if (/original_id\s*=\s*133/.test(source)) throw new Error("hardcoded original ID");
@@ -167,7 +266,7 @@ check(8, "Right is the one generated runtime cursor writer", () => {
   if (writes.length !== 1) throw new Error(`generated selected_target stores=${writes.length}`);
   const options = source.slice(source.indexOf("} else if(state == MENU_OPTIONS)"), source.indexOf("\n\t} else {", source.indexOf("} else if(state == MENU_OPTIONS)")));
   if (/0x8000/.test(options)) throw new Error("Left input in selector Options source");
-  need(options, /cbi & 0x2000[\s\S]*outfit_sel\.selected_target = selected_target/, "Right writer source");
+  need(options, /cbi & 0x2000[\s\S]*outfit->selected_target = \(short\)selected_target/, "Right writer source");
 });
 check(9, "candidate ID equals selected target before write", () =>
   need(source, /\*\(\(short\*\)\(candidate \+ 0x0c\)\) != outfit_sel\.selected_target/, "candidate ID check"));
@@ -179,7 +278,7 @@ check(10, "category-1 validation is retained", () => {
 check(11, "candidate differs from current config", () => need(source, /candidate == config/, "candidate distinctness"));
 check(12, "same-target paths have no equipment write", () => {
   need(source, /if\(outfit_sel\.selected_target == current_id\) return;/, "CLEAN no-op");
-  need(source, /selected_target != outfit_sel\.live_id[\s\S]*stage1_action\(slot, config, current_id, current_category, false\)[\s\S]*else \{\s*return HandleResumeGameTrampoline/s, "MODIFIED resume route");
+  need(source, /outfit->selected_target != outfit->live_id[\s\S]*action = true;[\s\S]*else \{\s*return HandleResumeGameTrampoline/s, "MODIFIED resume route");
 });
 check(13, "first apply has genuine slot store/reload", () =>
   need(source, /\*slot_word = candidate;\s*int back = \*slot_word;\s*if\(back == candidate\)/s, "first apply reload"));
@@ -202,26 +301,27 @@ check(18, "compiler barriers remain ordering-only", () => {
   if (/\bsync\b/.test(stage)) throw new Error("emitted sync instruction");
 });
 check(19, "drift classification precedes input dispatch", () =>
-  need(source, /bool hold = false;[\s\S]*if\(!hold\) \{\s*if\(cbi & 0x10\)/s, "drift before dispatch"));
+  need(source, /if\(outfit->state == 1\)[\s\S]*bool action = false;[\s\S]*if\(outfit->state != 2/s, "drift before dispatch"));
 check(20, "HOLD is narrowed, write-free, and non-sticky", () => {
-  need(source, /else if\(slot != outfit_sel\.saved_slot\) \{\s*hold = true;/s, "different-slot hold");
-  const holdBranch = source.slice(source.indexOf("else if(slot != outfit_sel.saved_slot)"), source.indexOf("} else if(config == outfit_sel.live_config"));
-  if (/outfit_sel\.(?:state|saved_slot|original_config|live_config|original_id|live_id)\s*=/.test(holdBranch)) throw new Error("HOLD mutates selector context");
+  if (/\bbool hold\b/.test(source)) throw new Error("long-lived HOLD remains");
+  need(source, /outfit->state == 1 && items && slot_word && config && slot != outfit->saved_slot/, "derived different-slot HOLD");
+  const hold = source.slice(source.indexOf("if(outfit->state != 2"), source.indexOf("if(cbi & 0x10)", source.indexOf("if(outfit->state != 2")));
+  if (/outfit->(?:state|saved_slot|original_config|live_config|original_id|live_id)\s*=/.test(hold)) throw new Error("HOLD predicate writes selector context");
 });
 check(21, "benign reset is write-free", () =>
-  need(source, /current_id == outfit_sel\.original_id && current_category == 1\) \{\s*outfit_clear_context\(\);\s*OUTFIT_BARRIER\(\);\s*outfit_sel\.state = 0;/s, "semantic original reset"));
+  need(source, /current_id == outfit->original_id && current_category == 1\) \{\s*outfit_clear_context\(\);\s*OUTFIT_BARRIER\(\);\s*outfit->state = 0;/s, "semantic original reset"));
 check(22, "UNSAFE blocks every selector input", () => {
-  need(source, /if\(outfit_sel\.state == 2\) \{\s*hold = true;/s, "UNSAFE hold");
-  need(source, /if\(!hold\) \{[\s\S]*cbi & 0x10/s, "dispatch is hold-gated");
+  need(source, /if\(outfit->state != 2 &&[\s\S]*if\(cbi & 0x10\)/s, "UNSAFE dispatch block");
 });
 check(23, "Triangle exits only from CLEAN", () =>
-  need(source, /if\(cbi & 0x10\) \{\s*if\(outfit_sel\.state == 0\)/s, "CLEAN Triangle"));
+  need(source, /if\(cbi & 0x10\) \{\s*if\(outfit->state == 0\)/s, "CLEAN Triangle"));
 check(24, "selector inputs are mutually exclusive", () =>
   need(source, /if\(cbi & 0x10\)[\s\S]*else if\(cbi & 0x80\)[\s\S]*else if\(cbi & 0x2000\)[\s\S]*else if\(cbi & 0x40\)/s, "input chain"));
 check(25, "X routing is explicit", () => {
-  need(source, /if\(outfit_sel\.state == 0\) \{\s*stage1_action\(slot, config, current_id, current_category, false\)/s, "CLEAN X");
-  need(source, /selected_target == outfit_sel\.original_id[\s\S]*stage1_action\(slot, config, current_id, current_category, true\)/s, "restore X");
-  need(source, /selected_target != outfit_sel\.live_id[\s\S]*stage1_action\(slot, config, current_id, current_category, false\)/s, "reselect X");
+  need(source, /if\(outfit->state == 0\) \{\s*if\(outfit->selected_target != current_id\) action = true;/s, "CLEAN X");
+  need(source, /outfit->selected_target == outfit->original_id[\s\S]*restore = true;/s, "restore X");
+  need(source, /outfit->selected_target != outfit->live_id[\s\S]*action = true;/s, "reselect X");
+  need(source, /if\(action\) stage1_action\(slot, config, current_id, current_category, restore\);/, "common action call");
 });
 check(26, "Options entry remains isolated", () =>
   need(source, /case 4:[\s\S]*state = MENU_OPTIONS;[\s\S]*return \(void\*\)0;/s, "entry return"));
@@ -258,7 +358,7 @@ check(36, "functional source isolation is limited to mod/mod.cpp", () => {
   if (paths.length !== 1 || paths[0] !== "mod/mod.cpp") throw new Error("functional patch scope");
 });
 check(37, "store base provenance distinguishes equipment from outfit state", () => {
-  if (!/R_MIPS_LO16\s+.*outfit_sel/s.test(readelf)) throw new Error("missing outfit_sel relocation evidence");
+  if (!selectorRelocations.size) throw new Error("missing outfit_sel relocation evidence");
   if (slotPairs.length < 3) throw new Error(`all offset-zero reload pairs=${slotPairs.length}`);
   if (equipmentPairs.length !== 3) throw new Error(`slot-provenance pairs=${equipmentPairs.length}`);
 });
@@ -269,7 +369,7 @@ check(38, "R-A old-live reload keeps the MODIFIED context", () => {
 check(39, "one selector Options-frame GetCurrentEquipmentSlot call", () => {
   if (nativeCalls.length !== 1) throw new Error(`native selector calls=${nativeCalls.length}`);
   if (nativeSlotCalls(stageRows).length !== 0) throw new Error("action helper reacquires slot");
-  need(source, /int display_config = \(unsigned\)slot >= 0x1000 \? \*\(\(volatile int\*\)slot\) : 0;/, "display reuses frame slot");
+  need(source, /int display_config = slot_word \? \*slot_word : 0;/, "display reuses frame slot proof");
 });
 
 const failures = gates.filter((gate) => gate.status === "FAIL");
@@ -286,10 +386,13 @@ fs.writeFileSync("reproducibility/hook-target-report.txt", [...candidateHooks.en
   .map(([address, word]) => `${hex(address)} ${word}`)
   .join("\n") + "\n");
 fs.writeFileSync("reproducibility/store-provenance-report.txt", [
-  `stage1_symbol=${stage.match(/<([^>]+)>/)[1]}`,
+  `stage1_symbol=${action.symbol}`,
+  `stage1_abi=${action.signature}`,
+  "cfg_aware=yes",
+  `selector_state_relocations=${selectorRelocations.size}`,
   `offset_zero_pairs=${slotPairs.length}`,
   `slot_provenance_pairs=${equipmentPairs.length}`,
-  ...slotPairs.map((pair) => `${hex(pair.store.offset, 4)} ${pair.store.asm} -> ${hex(pair.load.offset, 4)} ${pair.load.asm} origin=${pair.origin}`),
+  ...slotPairs.map((pair) => `${hex(pair.store.offset, 4)} ${pair.store.asm} -> ${hex(pair.load.offset, 4)} ${pair.load.asm} origins=${pair.origins.join(",")}`),
 ].join("\n") + "\n");
 fs.writeFileSync("reproducibility/get-current-equipment-slot-report.txt", [
   `selector_options_native_calls=${nativeCalls.length}`,
@@ -299,7 +402,7 @@ fs.writeFileSync("reproducibility/get-current-equipment-slot-report.txt", [
 ].join("\n") + "\n");
 fs.writeFileSync("reproducibility/source-isolation-report.txt", [
   "functional_runtime_paths=OutfitSelState,helpers,stage1_action,MENU_OPTIONS,MENU_MAIN_case_6",
-  "functional_patch=jerdana-final-selector-stagea-byte-recovery.patch",
+  "functional_patch=jerdana-final-selector-stagea-build3-tier1b.patch",
   "unexpected_runtime_source_paths=none",
 ].join("\n") + "\n");
 fs.writeFileSync("reproducibility/stageb-absence-report.txt", [
@@ -331,6 +434,6 @@ const report = [
   "gates:",
   ...gates.map((gate) => `gate_${gate.number}=${gate.status}${gate.detail ? ` ${gate.detail}` : ""}`),
 ];
-fs.writeFileSync("reproducibility/final-selector-stagea-byte-recovery-39-gate-report.txt", report.join("\n") + "\n");
+fs.writeFileSync("reproducibility/final-selector-stagea-build3-39-gate-report.txt", report.join("\n") + "\n");
 console.log(report.join("\n"));
 if (failures.length) process.exit(1);

@@ -1,10 +1,10 @@
-name: Jerdana Final Selector Stage A Byte Recovery
+name: Jerdana Final Selector Stage A Build 3 Tier-1B
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - jerdana-final-selector-stagea-byte-recovery
+      - jerdana-final-selector-stagea-byte-recovery-build3
 
 env:
   OFFICIAL_PNACH_SHA256: 8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214
@@ -14,6 +14,7 @@ env:
   R3_SOURCE_SHA256: 2e593ddec8c804aa96e2e80859606c8de0d75d88564ad109c69e73093cb40ad7
   BUILD1_SOURCE_SHA256: 755db82408e81438fea5e85d36513a980466bd1e749228fd77f1bfc07301368f
   BUILD2_SOURCE_SHA256: a579b8b37bfc24414521856f44794071bb0a94875bac3cc05ae3e56eac9739c7
+  BUILD3_SOURCE_SHA256: 36fcee4b477893e9280b2ac84587c8c80231574be0e4faf113ead642a6cebddf
 
 jobs:
   official-v2-4-regression:
@@ -106,7 +107,7 @@ jobs:
           wget https://github.com/ps2dev/ps2dev/releases/download/v1.1/ps2dev-ubuntu-latest.tar.gz
           sudo tar -xzf ps2dev-ubuntu-latest.tar.gz --directory /usr/local
 
-      - name: Reconstruct Build-1 parent and apply the Tier-1 recovery layer
+      - name: Reconstruct Build-2 parent and apply the Build-3 Tier-1B layer
         run: |
           git apply --ignore-whitespace --check reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
           git apply --ignore-whitespace reproducibility/jerdana-stage1-hardcoded-downgrade-shrink-pass3.patch
@@ -127,9 +128,15 @@ jobs:
           git apply --ignore-whitespace --check reproducibility/jerdana-final-selector-stagea-byte-recovery.patch
           git apply --ignore-whitespace reproducibility/jerdana-final-selector-stagea-byte-recovery.patch
           test "$(sha256sum mod/mod.cpp | awk '{print $1}')" = "$BUILD2_SOURCE_SHA256"
+          mkdir -p reproducibility/previous/build2-source
+          cp mod/mod.cpp reproducibility/previous/build2-source/mod.cpp
+          git apply --ignore-whitespace --check reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch
+          git apply --ignore-whitespace reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch
+          test "$(sha256sum mod/mod.cpp | awk '{print $1}')" = "$BUILD3_SOURCE_SHA256"
           diff -u reproducibility/previous/r3-source/mod.cpp mod/mod.cpp > reproducibility/source-diff-vs-r3-parent.patch || test $? -eq 1
           diff -u reproducibility/previous/build1-source/mod.cpp mod/mod.cpp > reproducibility/source-diff-vs-build1-parent.patch || test $? -eq 1
-          git diff --stat -- reproducibility/jerdana-final-selector-stagea.patch reproducibility/jerdana-final-selector-stagea-byte-recovery.patch mod/mod.cpp > reproducibility/stagea-source-scope.txt
+          diff -u reproducibility/previous/build2-source/mod.cpp mod/mod.cpp > reproducibility/source-diff-vs-build2-parent.patch || test $? -eq 1
+          git diff --stat -- reproducibility/jerdana-final-selector-stagea.patch reproducibility/jerdana-final-selector-stagea-byte-recovery.patch reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch mod/mod.cpp > reproducibility/stagea-source-scope.txt
 
       - name: Make official regression report available to verifier
         run: |
@@ -137,7 +144,7 @@ jobs:
           cp reproducibility/official-v2.4-regression/reproducibility/official-regression-report.txt reproducibility/official-regression-report.txt
           grep -Fx "official_regression=pass" reproducibility/official-regression-report.txt
 
-      - name: Build final selector Stage-A byte-recovery candidate
+      - name: Build final selector Stage-A Build-3 candidate
         run: |
           export PS2DEV=/usr/local/ps2dev
           export PS2SDK=$PS2DEV/ps2sdk
@@ -172,27 +179,28 @@ jobs:
         run: |
           {
             echo "build_environment=GitHub Actions official v2.4 PS2DEV v1.1"
-            echo "build1_source=${BUILD1_SOURCE_SHA256}"
-            echo "authorized_change=Stage-A T1-T7 byte recovery: one frame acquisition, shared validation/proof, OR CLEAN invariant, explicit action mode, inline UNSAFE"
+            echo "build2_source=${BUILD2_SOURCE_SHA256}"
+            echo "build3_source=${BUILD3_SOURCE_SHA256}"
+            echo "authorized_change=Stage-A Build-3 Tier-1B U1-U8 plus CFG-aware Gate-30/Gate-37 provenance"
             echo "R_MIPS_26_fix_preserved=yes"
             echo "installed=no"
             echo "runtime_tested=no"
-            sha256sum mod/mod.cpp mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c mod/mod.ii mod/mod.s mod/mod.o elf_processor.js reproducibility/jerdana-final-selector-stagea.patch reproducibility/jerdana-final-selector-stagea-byte-recovery.patch reproducibility/verify-r-mips26.js reproducibility/verify-final-selector-stagea.js
+            sha256sum mod/mod.cpp mod/934F9081.pnach mod/df_hack.elf mod/loader/patch.c mod/mod.ii mod/mod.s mod/mod.o elf_processor.js reproducibility/jerdana-final-selector-stagea.patch reproducibility/jerdana-final-selector-stagea-byte-recovery.patch reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch reproducibility/verify-r-mips26.js reproducibility/verify-final-selector-stagea.js
             wc -l mod/934F9081.pnach
           } | tee reproducibility/candidate-hash-report.txt
 
       - name: Preserve final source state
         if: always()
         run: |
-          git diff -- elf_processor.js mod/mod.cpp mod/make_mod.js mod/build.sh reproducibility/jerdana-final-selector-stagea.patch reproducibility/jerdana-final-selector-stagea-byte-recovery.patch reproducibility/verify-final-selector-stagea.js .github/workflows/jerdana-final-selector-stagea.yml > reproducibility/candidate-source-diff.patch
+          git diff -- elf_processor.js mod/mod.cpp mod/make_mod.js mod/build.sh reproducibility/jerdana-final-selector-stagea.patch reproducibility/jerdana-final-selector-stagea-byte-recovery.patch reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch reproducibility/verify-final-selector-stagea.js .github/workflows/jerdana-final-selector-stagea.yml > reproducibility/candidate-source-diff.patch
           git status --short > reproducibility/candidate-git-status.txt
           git rev-parse HEAD > reproducibility/source-commit.txt
 
-      - name: Upload final selector Stage-A byte-recovery evidence
+      - name: Upload final selector Stage-A Build-3 evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: jerdana-final-selector-stagea-byte-recovery
+          name: jerdana-final-selector-stagea-byte-recovery-build3
           path: |
             mod/934F9081.pnach
             mod/df_hack.elf
@@ -206,12 +214,14 @@ jobs:
             reproducibility/jerdana-r3-multitarget-diagnostic.patch
             reproducibility/jerdana-final-selector-stagea.patch
             reproducibility/jerdana-final-selector-stagea-byte-recovery.patch
+            reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch
             reproducibility/source-diff-vs-r3-parent.patch
             reproducibility/source-diff-vs-build1-parent.patch
+            reproducibility/source-diff-vs-build2-parent.patch
             reproducibility/stagea-source-scope.txt
             reproducibility/official-regression-report.txt
             reproducibility/candidate-r-mips26-report.txt
-            reproducibility/final-selector-stagea-byte-recovery-39-gate-report.txt
+            reproducibility/final-selector-stagea-build3-39-gate-report.txt
             reproducibility/source-isolation-report.txt
             reproducibility/stageb-absence-report.txt
             reproducibility/store-provenance-report.txt
