@@ -1,0 +1,219 @@
+diff --git a/mod/mod.cpp b/mod/mod.cpp
+index cbaea10..439dacb 100644
+--- a/mod/mod.cpp
++++ b/mod/mod.cpp
+@@ -1,7 +1,6 @@
+ #define sprintf ((void (*)(char *, const char *, ...))0x2c1480)
+ #define printf ((void (*)(const char *, ...))0x2ca710)
+ #define DisplayScreenMessage ((void (*)(char *, float, float, float))0x179620)
+-#define DisplayWorldString ((void (*)(int, u128, char*, bool))0x1729b0)
+ #define FloatToChar ((void (*)(float, int, char*))0x1796c0)
+ #define draw_debug_text ((void (*)(const char *, bool, const char *, int, void*, void*, float, float, float))0x255618)
+ //#define get_sound_ptr ((void*(*)())0x286c90)
+@@ -87,10 +86,8 @@ char *char_buf = (char*)0x70000080;
+ const int char_buf_len = 0x400;
+ char *textbox_buf = (char*)0x70000480;
+ const int textbox_buf_len = 0x400;
+-bool debug_mode_on = false;
+-bool suppress_loads = false;
+-bool coords_display = false;
+-bool alignment_display = false;
++bool debug_mode_on = false;
++bool coords_display = false;
+ 
+ float *old_map_matrix = (float*)0x70000000;
+ float *old_map_matrix_ptr;
+@@ -107,22 +104,11 @@ float map_scale_z = 448/3 * 0.005;
+ float player_last_x = 0;
+ float player_last_z = 0;
+ 
+-char *alignment_strings[] = {
+-	"None",
+-	"Fire",
+-	"Earth",
+-	"Light",
+-	"Water",
+-	"Air",
+-	"Darkness",
+-	"Rainbow"
+-};
+-
+-// Hack menu includes:
+-char *hack_menu_items[] = {
+-	"Load Area\n",
+-	"Give Item\n",
+-	"Edit NP\n",
++// Hack menu includes:
++char *hack_menu_items[] = {
++	"Load Area\n",
++	"Give Item\n",
++	"Jerdana Outfit\n",
+ 	"Edit Flags\n",
+ 	"Options\n",
+ 	"Zone Map\n",
+@@ -144,8 +130,7 @@ int give_item_id = 0;
+ int give_item_page = 0;
+ int give_item_amount = 1;
+ short give_item_amount_digit = 0;
+-short neopoints_digit = 0;
+-int flag_id;
++int flag_id;
+ short flag_digit;
+ 
+ int last_player_state = 0;
+@@ -169,7 +154,7 @@ struct OutfitSelState {
+ OutfitSelState outfit_sel = {0, 0, 0, 0, 0, 127, 0};
+ 
+ enum MenuState {
+-	MENU_OFF, MENU_MAIN, MENU_LOAD_AREA, MENU_GIVE_ITEM_ID, MENU_GIVE_ITEM_AMT, MENU_EDIT_NP, MENU_EDIT_FLAGS, MENU_OPTIONS
++	MENU_OFF, MENU_MAIN, MENU_LOAD_AREA, MENU_GIVE_ITEM_ID, MENU_GIVE_ITEM_AMT, MENU_JERDANA_OUTFIT, MENU_EDIT_FLAGS, MENU_OPTIONS
+ };
+ MenuState state;
+ 
+@@ -386,8 +371,7 @@ extern "C" void SwapExteriorHook(int a0, int map, int a2, int a3) {
+ 	if(/*map != *((int*)0x33F570) && */current_ledge_fly == 0x33F570) {
+ 		CancelLedgeFly(true);
+ 	}
+-	if(suppress_loads) return;
+-	if(load_delay > 0) {
++	if(load_delay > 0) {
+ 		load_delay--;
+ 		return;
+ 	}
+@@ -398,8 +382,7 @@ extern "C" void SwapTransitionHook(int a0, int map, int a2, int a3) {
+ 	if(/*map != *((int*)0x339C20) && */current_ledge_fly == 0x339C20) {
+ 		CancelLedgeFly(false);
+ 	}
+-	if(suppress_loads) return;
+-	if(load_delay > 0) {
++	if(load_delay > 0) {
+ 		load_delay--;
+ 		return;
+ 	}
+@@ -589,7 +572,7 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 				break;
+ 			case 2:
+ 				playmenusound(0x5);
+-				state = MENU_EDIT_NP;
++				state = MENU_JERDANA_OUTFIT;
+ 				hacks_menu_idx = 0;
+ 				break;
+ 			case 3:
+@@ -732,33 +715,7 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 		}
+ 		append_str(char_buf, "\n\nAmount: ", char_buf_len);
+ 		editable_number(give_item_amount, give_item_amount_digit, cbi, 1, 4, 10, 9999);
+-	} else if(state == MENU_EDIT_NP) {
+-		if(cbi & 0x50) {
+-			playmenusound(0x6);
+-			state = MENU_MAIN;
+-			hacks_menu_idx = 2;
+-			return (void*)0;
+-		}
+-		append_str(char_buf, "$", char_buf_len);
+-		editable_number(*((int*)(*((int*)0x35c7ec) + 0x14)), neopoints_digit, cbi, 1, 7, 10, 9999999);
+-	} else if(state == MENU_EDIT_FLAGS) {
+-		if(cbi & 0x10) {
+-			playmenusound(0x6);
+-			state = MENU_MAIN;
+-			hacks_menu_idx = 3;
+-			return (void*)0;
+-		} else if(cbi & 0x40) {
+-			SetGameState(flag_id, !QueryGameState(flag_id));
+-			playmenusound(0x1);
+-		}
+-		append_str(char_buf, "Flag 0x", char_buf_len);
+-		editable_number(flag_id, flag_digit, cbi, 3, 3, 16, 0x2E6);
+-		if(QueryGameState(flag_id)) {
+-			append_str(char_buf, "\n\n  true", char_buf_len);
+-		} else {
+-			append_str(char_buf, "\n\n  false", char_buf_len);
+-		}
+-	} else if(state == MENU_OPTIONS) {
++	} else if(state == MENU_JERDANA_OUTFIT) {
+ 		OutfitSelState *const outfit = &outfit_sel;
+ 		int items = *((int*)0x35c7ec);
+ 		int slot = items ? GetCurrentEquipmentSlot(items, 1) : 0;
+@@ -787,12 +744,12 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 		bool action = false;
+ 		bool restore = false;
+ 		if(outfit->state != 2 &&
+-		   !(outfit->state == 1 && items && slot_word && config && slot != outfit->saved_slot)) {
++		   !(outfit->state == 1 && slot != outfit->saved_slot)) {
+ 			if(cbi & 0x10) {
+ 				if(outfit->state == 0) {
+ 					playmenusound(0x6);
+ 					state = MENU_MAIN;
+-					hacks_menu_idx = 0;
++					hacks_menu_idx = 2;
+ 					return (void*)0;
+ 				}
+ 			} else if(cbi & 0x80) {
+@@ -826,6 +783,35 @@ extern "C" void *ResumeGameHook(int a0, int a1, int a2, int a3, int t0) {
+ 		char line[32];
+ 		sprintf(line, "J%d %d %d", outfit->state, live_id, outfit->selected_target);
+ 		append_str(char_buf, line, char_buf_len);
++	} else if(state == MENU_EDIT_FLAGS) {
++		if(cbi & 0x10) {
++			playmenusound(0x6);
++			state = MENU_MAIN;
++			hacks_menu_idx = 3;
++			return (void*)0;
++		} else if(cbi & 0x40) {
++			SetGameState(flag_id, !QueryGameState(flag_id));
++			playmenusound(0x1);
++		}
++		append_str(char_buf, "Flag 0x", char_buf_len);
++		editable_number(flag_id, flag_digit, cbi, 3, 3, 16, 0x2E6);
++		if(QueryGameState(flag_id)) {
++			append_str(char_buf, "\n\n  true", char_buf_len);
++		} else {
++			append_str(char_buf, "\n\n  false", char_buf_len);
++		}
++	} else if(state == MENU_OPTIONS) {
++		if(cbi & 0x10) {
++			playmenusound(0x6);
++			state = MENU_MAIN;
++			hacks_menu_idx = 4;
++			return (void*)0;
++		} else if(cbi & 0x40) {
++			coords_display = !coords_display;
++			playmenusound(0x1);
++		}
++		append_str(char_buf, "Show Coordinates", char_buf_len);
++		append_str(char_buf, coords_display ? " - On\n" : " - Off\n", char_buf_len);
+ 
+ 	} else {
+ 		state = MENU_OFF;
+@@ -1206,31 +1192,6 @@ extern "C" void do_mod() {
+ 		DisplayScreenMessage(char_buf, -3.0f, 3.0f, 20.0f);
+ 		player_last_x = x;
+ 		player_last_z = z;
+-	}
+-	if(*((int*)0x39ABD8) == 0xB3B62C && alignment_display) {
+-		int num_enemies = *((int*)0x35c8f8);
+-		int *enemies = *((int**)0x35c8fc);
+-		for(int i = 0; i < num_enemies; i++) {
+-			int enemy = enemies[i];
+-			int vtable = *((int*)(enemy + 0x164));
+-			int (*alignment_fun)(int) = *(int (**)(int))(vtable + 0x114);
+-			int alignment = alignment_fun(enemy + *((int*)(vtable + 0x110)));
+-			if(alignment > 0 && alignment <= 7) {
+-				union {
+-					struct {
+-						float x, y, z, w;
+-					};
+-					u128 packed;
+-				} location;
+-				int entity_pointer = *((int*)(enemy + 0x16C));
+-				location.x = *((float*)(entity_pointer + 0x50));
+-				location.y = *((float*)(entity_pointer + 0x54));
+-				location.z = *((float*)(entity_pointer + 0x58));
+-				location.w = 1.0;
+-				DisplayWorldString(*((int*)0x35c884), location.packed, alignment_strings[alignment], false);
+-			}
+-		}
+-		//printf("\n");
+ 	}
+ 	 /*
+ 

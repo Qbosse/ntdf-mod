@@ -6,7 +6,7 @@ const fs = require("fs");
 const DATA_START = 0x3043b0;
 const PREFERRED_END = 0x307fc4;
 const ABSOLUTE_GUARD = 0x30809c;
-const BUILD1_SOURCE = "755db82408e81438fea5e85d36513a980466bd1e749228fd77f1bfc07301368f";
+const BUILD3_SOURCE = "36fcee4b477893e9280b2ac84587c8c80231574be0e4faf113ead642a6cebddf";
 const OFFICIAL_PNACH = "8eee249568fd94e05998b0dab30b8fa427e064845dd8b73f9e9f4f25865eb214";
 
 function sha(path) {
@@ -85,7 +85,7 @@ function branchTarget(asm) {
 function controlKind(asm) {
   const operation = asm.split(/\s+/)[0].toLowerCase();
   if (operation === "jr") return "return";
-  if (operation === "j") return "jump";
+  if (operation === "j" || operation === "b") return "jump";
   if (operation === "jal" || operation === "jalr") return "call";
   if (/^b(?:eq|ne|gez|gtz|lez|ltz|al|c1)/.test(operation)) return operation.endsWith("l") ? "branch-likely" : "branch";
   return null;
@@ -99,8 +99,8 @@ function cfg(instructions) {
   for (let index = 0; index < instructions.length; index++) {
     const kind = controlKind(instructions[index].asm);
     if (kind) {
-      add(index, index + 1);
       if (index + 1 >= instructions.length) continue;
+      add(index, index + 1); // MIPS control transfers execute the delay slot.
       if (kind === "return") continue;
       if (kind === "call") {
         add(index + 1, index + 2);
@@ -109,11 +109,15 @@ function cfg(instructions) {
       const target = branchTarget(instructions[index].asm);
       if (target === null || !byOffset.has(target)) throw new Error(`unresolved ${kind} target at ${hex(instructions[index].offset, 4)}`);
       if (kind === "branch-likely") {
+        // The delay slot executes only on the taken path for a likely branch.
         add(index, index + 2);
         add(index + 1, byOffset.get(target));
-      } else {
+      } else if (kind === "branch") {
         add(index + 1, byOffset.get(target));
-        if (kind === "branch") add(index + 1, index + 2);
+        add(index + 1, index + 2);
+      } else {
+        // An unconditional jump reaches only its target after the delay slot.
+        add(index + 1, byOffset.get(target));
       }
       continue;
     }
@@ -138,19 +142,18 @@ function definition(row, register, selectorRelocations) {
   }
   const copy = assignment(row);
   if (copy && copy.dst === register) return copy.src ? { kind: "copy", src: copy.src } : { kind: "other" };
+  const conditionalMove = row.asm.match(/^mov[zn]\s+([^,]+),([^,]+),[^,]+$/);
+  if (conditionalMove && conditionalMove[1] === register) return { kind: "conditional-copy", src: conditionalMove[2] };
   if (/^(?:jal|jalr)\b/.test(row.asm) && /^(a[0-3]|t[0-9]|v[01])$/.test(register)) return { kind: "other" };
   return null;
 }
 function provenanceAt(instructions, graph, selectorRelocations, entryRoots, point, register) {
   const roots = new Set();
-  const visited = new Set();
+  const active = new Set();
   function visit(index, current) {
     const key = `${index}:${current}`;
-    if (visited.has(key)) {
-      roots.add("cycle");
-      return;
-    }
-    visited.add(key);
+    if (active.has(key)) return; // Reconvergent predecessors are not provenance roots.
+    active.add(key);
     const predecessors = graph.predecessors[index];
     if (!predecessors.size) {
       roots.add(entryRoots[current] || "unknown-entry");
@@ -162,12 +165,16 @@ function provenanceAt(instructions, graph, selectorRelocations, entryRoots, poin
         visit(predecessor, current);
       } else if (found.kind === "copy") {
         visit(predecessor, found.src);
+      } else if (found.kind === "conditional-copy") {
+        visit(predecessor, current);
+        visit(predecessor, found.src);
       } else if (found.kind === "root") {
         roots.add(found.root);
       } else {
         roots.add("other");
       }
     });
+    active.delete(key);
   }
   visit(point, register);
   return [...roots].sort();
@@ -214,7 +221,7 @@ function check(number, label, callback) {
 }
 
 const source = fs.readFileSync("mod/mod.cpp", "utf8");
-const patch = fs.readFileSync("reproducibility/jerdana-final-selector-stagea-build3-tier1b.patch", "utf8");
+const patch = fs.readFileSync("reproducibility/jerdana-final-selector-menu-pruning-placement.patch", "utf8");
 const disassembly = fs.readFileSync("reproducibility/mod-objdump-dr.txt", "utf8");
 const readelf = fs.readFileSync("reproducibility/mod-readelf-rws.txt", "utf8");
 const action = selectorAction(disassembly, source);
@@ -233,7 +240,7 @@ const candidateHooks = externalHooks(candidate);
 const officialHooks = externalHooks(official);
 const gates = [];
 
-check(1, "one Options-frame acquisition dominates selector dispatch", () => {
+check(1, "one selector-frame acquisition dominates selector dispatch", () => {
   need(source, /int items = \*\(\(int\*\)0x35c7ec\);\s*int slot = items \? GetCurrentEquipmentSlot\(items, 1\) : 0;/s, "single acquisition source shape");
   if (nativeCalls.length !== 1) throw new Error(`generated GetCurrentEquipmentSlot calls=${nativeCalls.length}`);
 });
@@ -264,9 +271,9 @@ check(7, "target is initialized and bounded to 127..133", () => {
 check(8, "Right is the one generated runtime cursor writer", () => {
   const writes = resumeRows.filter((row) => /^sh\s+[^,]+,18\([^)]+\)$/.test(row.asm));
   if (writes.length !== 1) throw new Error(`generated selected_target stores=${writes.length}`);
-  const options = source.slice(source.indexOf("} else if(state == MENU_OPTIONS)"), source.indexOf("\n\t} else {", source.indexOf("} else if(state == MENU_OPTIONS)")));
-  if (/0x8000/.test(options)) throw new Error("Left input in selector Options source");
-  need(options, /cbi & 0x2000[\s\S]*outfit->selected_target = \(short\)selected_target/, "Right writer source");
+  const selector = source.slice(source.indexOf("} else if(state == MENU_JERDANA_OUTFIT)"), source.indexOf("} else if(state == MENU_EDIT_FLAGS)", source.indexOf("} else if(state == MENU_JERDANA_OUTFIT)")));
+  if (/0x8000/.test(selector)) throw new Error("Left input in selector source");
+  need(selector, /cbi & 0x2000[\s\S]*outfit->selected_target = \(short\)selected_target/, "Right writer source");
 });
 check(9, "candidate ID equals selected target before write", () =>
   need(source, /\*\(\(short\*\)\(candidate \+ 0x0c\)\) != outfit_sel\.selected_target/, "candidate ID check"));
@@ -304,9 +311,9 @@ check(19, "drift classification precedes input dispatch", () =>
   need(source, /if\(outfit->state == 1\)[\s\S]*bool action = false;[\s\S]*if\(outfit->state != 2/s, "drift before dispatch"));
 check(20, "HOLD is narrowed, write-free, and non-sticky", () => {
   if (/\bbool hold\b/.test(source)) throw new Error("long-lived HOLD remains");
-  need(source, /outfit->state == 1 && items && slot_word && config && slot != outfit->saved_slot/, "derived different-slot HOLD");
+  need(source, /outfit->state == 1 && slot != outfit->saved_slot/, "derived different-slot HOLD");
   const hold = source.slice(source.indexOf("if(outfit->state != 2"), source.indexOf("if(cbi & 0x10)", source.indexOf("if(outfit->state != 2")));
-  if (/outfit->(?:state|saved_slot|original_config|live_config|original_id|live_id)\s*=/.test(hold)) throw new Error("HOLD predicate writes selector context");
+  if (/outfit->(?:state|saved_slot|original_config|live_config|original_id|live_id)\s*=(?!=)/.test(hold)) throw new Error("HOLD predicate writes selector context");
 });
 check(21, "benign reset is write-free", () =>
   need(source, /current_id == outfit->original_id && current_category == 1\) \{\s*outfit_clear_context\(\);\s*OUTFIT_BARRIER\(\);\s*outfit->state = 0;/s, "semantic original reset"));
@@ -323,8 +330,11 @@ check(25, "X routing is explicit", () => {
   need(source, /outfit->selected_target != outfit->live_id[\s\S]*action = true;/s, "reselect X");
   need(source, /if\(action\) stage1_action\(slot, config, current_id, current_category, restore\);/, "common action call");
 });
-check(26, "Options entry remains isolated", () =>
-  need(source, /case 4:[\s\S]*state = MENU_OPTIONS;[\s\S]*return \(void\*\)0;/s, "entry return"));
+check(26, "row 2 owns the selector and row 4 owns Show Coordinates", () => {
+  need(source, /"Give Item\\n",\s*"Jerdana Outfit\\n",\s*"Edit Flags\\n",\s*"Options\\n"/s, "pruned menu rows");
+  need(source, /case 2:[\s\S]*state = MENU_JERDANA_OUTFIT;[\s\S]*case 4:[\s\S]*state = MENU_OPTIONS;/s, "row routing");
+  need(source, /state == MENU_OPTIONS[\s\S]*hacks_menu_idx = 4[\s\S]*coords_display = !coords_display[\s\S]*"Show Coordinates"/s, "direct Show Coordinates page");
+});
 check(27, "hack-menu Save remains guarded while modified", () =>
   need(source, /case 6:\s*if\(outfit_sel\.state != 0\)[\s\S]*return \(void\*\)0;/s, "Save guard"));
 check(28, "Stage-B name and reapply features are absent", () => {
@@ -366,10 +376,29 @@ check(38, "R-A old-live reload keeps the MODIFIED context", () => {
   const branch = source.slice(source.indexOf("else if(back != old_live_config)"), source.indexOf("void CancelLedgeFly"));
   if (/outfit_sel\.(saved_slot|original_config|original_id|live_config|live_id)\s*=/.test(branch)) throw new Error("old-live branch mutates context");
 });
-check(39, "one selector Options-frame GetCurrentEquipmentSlot call", () => {
+check(39, "one selector-frame GetCurrentEquipmentSlot call", () => {
   if (nativeCalls.length !== 1) throw new Error(`native selector calls=${nativeCalls.length}`);
   if (nativeSlotCalls(stageRows).length !== 0) throw new Error("action helper reacquires slot");
   need(source, /int display_config = slot_word \? \*slot_word : 0;/, "display reuses frame slot proof");
+});
+check(40, "legacy Edit NP, suppress-loads, and alignment surfaces are absent", () => {
+  if (/MENU_EDIT_NP|Edit NP|neopoints_digit|suppress_loads|alignment_display|alignment_strings|DisplayWorldString/.test(source)) {
+    throw new Error("legacy menu or overlay surface remains");
+  }
+  if (!/editable_number\(give_item_amount, give_item_amount_digit/.test(source)) throw new Error("Give Item Amount editor missing");
+  if (!/extern "C" bool IsDebugMode\(\)/.test(source)) throw new Error("IsDebugMode removed");
+  if (!/sqrtf\(/.test(source)) throw new Error("coordinate overlay sqrtf removed");
+});
+check(41, "dead-HOLD cleanup is dominated by ACTIVE state and saved-slot drift", () => {
+  need(source, /if\(outfit->state == 1\) \{[\s\S]*outfit->state = 2;/s, "ACTIVE validation before dispatch");
+  need(source, /if\(outfit->state != 2 &&\s*!\(outfit->state == 1 && slot != outfit->saved_slot\)\)/s, "minimal HOLD predicate");
+  if (/items && slot_word && config && slot != outfit->saved_slot/.test(source)) throw new Error("dead HOLD prerequisites retained");
+});
+check(42, "CFG models bare jumps, likely branches, and conditional moves", () => {
+  if (controlKind("b 1234 <target>" ) !== "jump") throw new Error("bare b classification");
+  if (controlKind("beql a0,a1,1234 <target>") !== "branch-likely") throw new Error("likely branch classification");
+  const move = definition({ offset: 0, asm: "movz t0,t1,t2" }, "t0", new Set());
+  if (!move || move.kind !== "conditional-copy" || move.src !== "t1") throw new Error("conditional move model");
 });
 
 const failures = gates.filter((gate) => gate.status === "FAIL");
@@ -401,8 +430,8 @@ fs.writeFileSync("reproducibility/get-current-equipment-slot-report.txt", [
   "display_reacquisition=0",
 ].join("\n") + "\n");
 fs.writeFileSync("reproducibility/source-isolation-report.txt", [
-  "functional_runtime_paths=OutfitSelState,helpers,stage1_action,MENU_OPTIONS,MENU_MAIN_case_6",
-  "functional_patch=jerdana-final-selector-stagea-build3-tier1b.patch",
+	"functional_runtime_paths=OutfitSelState,helpers,stage1_action,MENU_JERDANA_OUTFIT,MENU_OPTIONS,MENU_MAIN_case_2_case_4_case_6",
+	"functional_patch=jerdana-final-selector-menu-pruning-placement.patch",
   "unexpected_runtime_source_paths=none",
 ].join("\n") + "\n");
 fs.writeFileSync("reproducibility/stageb-absence-report.txt", [
@@ -418,7 +447,7 @@ fs.writeFileSync("reproducibility/stageb-absence-report.txt", [
   "architecture_a_immediate_write=absent",
 ].join("\n") + "\n");
 const report = [
-  `build1_source_expected=${BUILD1_SOURCE}`,
+	`build3_parent_source_expected=${BUILD3_SOURCE}`,
   `candidate_source=${sha("mod/mod.cpp")}`,
   `candidate_pnach=${sha("mod/934F9081.pnach")}`,
   `line_count=${candidate.text.trimEnd().split(/\r?\n/).length}`,
@@ -434,6 +463,14 @@ const report = [
   "gates:",
   ...gates.map((gate) => `gate_${gate.number}=${gate.status}${gate.detail ? ` ${gate.detail}` : ""}`),
 ];
-fs.writeFileSync("reproducibility/final-selector-stagea-build3-39-gate-report.txt", report.join("\n") + "\n");
+fs.writeFileSync("reproducibility/dead-hold-dominance-report.txt", [
+	"source_state1_validation_precedes_dispatch=yes",
+	"source_hold_predicate=ACTIVE_and_saved_slot_drift_only",
+	"dead_prerequisite_terms=absent",
+	`generated_resume_rows=${resumeRows.length}`,
+	"generated_cfg_model=delay-slot-aware",
+	"generated_provenance_model=reconvergence-safe",
+].join("\n") + "\n");
+fs.writeFileSync("reproducibility/final-selector-menu-pruning-placement-gate-report.txt", report.join("\n") + "\n");
 console.log(report.join("\n"));
 if (failures.length) process.exit(1);
